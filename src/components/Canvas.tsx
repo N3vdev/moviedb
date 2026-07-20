@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import PosterCard from './PosterCard'
 import Header from './Header'
 import ZoomControls from './ZoomControls'
+import SearchBar from './SearchBar'
+import FilterPanel from './FilterPanel'
+import MovieDetailModal, { type SelectedMovie } from './MovieDetailModal'
+import { usePosterFeed, DEFAULT_FILTERS, type FeedFilters } from '../hooks/usePosterFeed'
+import { posterUrl, type TmdbItem } from '../lib/tmdb'
 import {
+  CARD_WIDTH,
+  CARD_HEIGHT,
   CELL_WIDTH,
   CELL_HEIGHT,
   COLUMNS,
@@ -12,6 +19,11 @@ import {
   MIN_SCALE,
   MAX_SCALE,
 } from '../lib/gridConfig'
+
+const FOCUS_SCALE = 1.15
+const FOCUS_HIGHLIGHT_MS = 2600
+const FOCUS_PAN_DURATION_MS = 1200
+const TAP_MOVE_THRESHOLD = 6
 
 interface Transform {
   x: number
@@ -52,12 +64,24 @@ export default function Canvas() {
 
   const pointers = useRef(new Map<number, Point>())
   const dragLast = useRef<Point | null>(null)
+  const dragDistanceRef = useRef(0)
   const pinch = useRef<{ lastDist: number; lastMid: Point } | null>(null)
   const velocity = useRef<Point>({ x: 0, y: 0 })
   const lastMoveTime = useRef(0)
   const rafId = useRef<number | null>(null)
   const wheelIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hasCentered = useRef(false)
+
+  const [filters, setFilters] = useState<FeedFilters>(DEFAULT_FILTERS)
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false)
+  const [focusedCellId, setFocusedCellId] = useState<number | null>(null)
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [selectedMovie, setSelectedMovie] = useState<SelectedMovie | null>(null)
+
+  const filtersActive =
+    filters.mediaType !== 'all' || filters.genreIds.length > 0 || filters.sortBy !== 'popularity.desc'
+
+  const { assignments, ensureCells, focusMovie } = usePosterFeed(filters)
 
   const scheduleSync = useCallback(() => {
     if (syncScheduled.current) return
@@ -83,11 +107,11 @@ export default function Canvas() {
     }
   }, [scheduleSync])
 
-  const setInteracting = useCallback((flag: boolean) => {
+  const setInteracting = useCallback((flag: boolean, durationMs = 300) => {
     setIsInteracting(flag)
     const el = worldRef.current
     if (el) {
-      el.style.transition = flag ? 'none' : 'transform 300ms cubic-bezier(0.16, 1, 0.3, 1)'
+      el.style.transition = flag ? 'none' : `transform ${durationMs}ms cubic-bezier(0.16, 1, 0.3, 1)`
     }
   }, [])
 
@@ -171,6 +195,7 @@ export default function Canvas() {
 
     if (pointers.current.size === 1) {
       dragLast.current = { x: e.clientX, y: e.clientY }
+      dragDistanceRef.current = 0
       velocity.current = { x: 0, y: 0 }
       lastMoveTime.current = performance.now()
     } else if (pointers.current.size === 2) {
@@ -200,6 +225,7 @@ export default function Canvas() {
     } else if (dragLast.current && pointers.current.size === 1) {
       const dx = e.clientX - dragLast.current.x
       const dy = e.clientY - dragLast.current.y
+      dragDistanceRef.current += Math.hypot(dx, dy)
       const t = transformRef.current
       applyTransform({ ...t, x: t.x + dx, y: t.y + dy })
 
@@ -211,18 +237,36 @@ export default function Canvas() {
     }
   }, [zoomAt, applyTransform])
 
+  // A card lives inside the same pointer-driven pan surface as the rest of
+  // the canvas, so "click" can't be told apart from "drag" by event type
+  // alone — track total movement since pointerdown and only treat it as a
+  // tap if the pointer barely moved. Pointer capture (set in
+  // handlePointerDown) means e.target here is still the exact card element
+  // pressed, regardless of where the pointer ended up.
+  const handleCardTap = useCallback((cellId: number) => {
+    const assignment = assignments.get(cellId)
+    if (!assignment) return
+    setSelectedMovie({ id: assignment.tmdbId, mediaType: assignment.mediaType })
+  }, [assignments])
+
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    const wasSinglePointer = pointers.current.size === 1
     pointers.current.delete(e.pointerId)
     pinch.current = null
 
     if (pointers.current.size === 0) {
       dragLast.current = null
+      if (wasSinglePointer && dragDistanceRef.current < TAP_MOVE_THRESHOLD) {
+        const cardEl = (e.target as HTMLElement).closest?.('[data-card-id]')
+        const cellIdAttr = cardEl?.getAttribute('data-card-id')
+        if (cellIdAttr) handleCardTap(Number(cellIdAttr))
+      }
       startInertia()
     } else if (pointers.current.size === 1) {
       const remaining = Array.from(pointers.current.values())[0]
       dragLast.current = { x: remaining.x, y: remaining.y }
     }
-  }, [startInertia])
+  }, [startInertia, handleCardTap])
 
   // Native (non-passive) wheel listener so we can preventDefault and stop
   // the page from scrolling while zooming the canvas.
@@ -273,30 +317,91 @@ export default function Canvas() {
     )
   }, [size, cancelInertia, setInteracting, applyTransform])
 
+  // Smoothly pans/zooms so the given world-space cell is centered in the
+  // viewport, using the same animated (CSS-transitioned) path as the zoom
+  // buttons and reset — not the raw per-event drag/wheel path. Runs slower
+  // than those so the canvas actually gliding across to the result reads
+  // clearly, rather than an instant cut.
+  const focusOnCell = useCallback((left: number, top: number) => {
+    cancelInertia()
+    setInteracting(false, FOCUS_PAN_DURATION_MS)
+    const centerX = left + CARD_WIDTH / 2
+    const centerY = top + CARD_HEIGHT / 2
+    applyTransform(
+      {
+        scale: FOCUS_SCALE,
+        x: size.width / 2 - centerX * FOCUS_SCALE,
+        y: size.height / 2 - centerY * FOCUS_SCALE,
+      },
+      true,
+    )
+  }, [size, cancelInertia, setInteracting, applyTransform])
+
+  const handleSelectMovie = useCallback((item: TmdbItem) => {
+    const { cellId, left, top } = focusMovie(item)
+    focusOnCell(left, top)
+    setFocusedCellId(cellId)
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current)
+    focusTimerRef.current = setTimeout(() => setFocusedCellId(null), FOCUS_HIGHLIGHT_MS)
+  }, [focusMovie, focusOnCell])
+
+  useEffect(() => {
+    return () => {
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current)
+    }
+  }, [])
+
   // Virtualization: only render the cards whose cells intersect the
   // current viewport, so the world can scale to millions of posters.
-  const cards: { id: number; left: number; top: number }[] = []
-  if (size.width > 0 && renderTransform.scale > 0) {
+  const cards = useMemo(() => {
+    const list: { id: number; left: number; top: number; visible: boolean }[] = []
+    // Skip until the world has actually been centered — otherwise this
+    // would momentarily compute cells for the pre-center transform (0,0,1)
+    // and burn early poster-feed requests (including the #1 trending slot)
+    // on cells nobody will ever see.
+    if (size.width === 0 || renderTransform.scale <= 0 || !hasCentered.current) return list
+
     const viewLeft = -renderTransform.x / renderTransform.scale
     const viewTop = -renderTransform.y / renderTransform.scale
     const viewRight = viewLeft + size.width / renderTransform.scale
     const viewBottom = viewTop + size.height / renderTransform.scale
 
-    const colStart = clamp(Math.floor(viewLeft / CELL_WIDTH) - BUFFER_CELLS, 0, COLUMNS - 1)
-    const colEnd = clamp(Math.ceil(viewRight / CELL_WIDTH) + BUFFER_CELLS, 0, COLUMNS - 1)
-    const rowStart = clamp(Math.floor(viewTop / CELL_HEIGHT) - BUFFER_CELLS, 0, ROWS - 1)
-    const rowEnd = clamp(Math.ceil(viewBottom / CELL_HEIGHT) + BUFFER_CELLS, 0, ROWS - 1)
+    // Strictly-on-screen bounds (no buffer) — used to prioritize which
+    // cells get poster images first when the fetch pool is scarce.
+    const strictColStart = clamp(Math.floor(viewLeft / CELL_WIDTH), 0, COLUMNS - 1)
+    const strictColEnd = clamp(Math.ceil(viewRight / CELL_WIDTH), 0, COLUMNS - 1)
+    const strictRowStart = clamp(Math.floor(viewTop / CELL_HEIGHT), 0, ROWS - 1)
+    const strictRowEnd = clamp(Math.ceil(viewBottom / CELL_HEIGHT), 0, ROWS - 1)
+
+    const colStart = clamp(strictColStart - BUFFER_CELLS, 0, COLUMNS - 1)
+    const colEnd = clamp(strictColEnd + BUFFER_CELLS, 0, COLUMNS - 1)
+    const rowStart = clamp(strictRowStart - BUFFER_CELLS, 0, ROWS - 1)
+    const rowEnd = clamp(strictRowEnd + BUFFER_CELLS, 0, ROWS - 1)
 
     for (let row = rowStart; row <= rowEnd; row++) {
       for (let col = colStart; col <= colEnd; col++) {
-        cards.push({
+        list.push({
           id: row * COLUMNS + col,
           left: col * CELL_WIDTH,
           top: row * CELL_HEIGHT,
+          visible:
+            row >= strictRowStart && row <= strictRowEnd &&
+            col >= strictColStart && col <= strictColEnd,
         })
       }
     }
-  }
+    return list
+  }, [size.width, size.height, renderTransform.x, renderTransform.y, renderTransform.scale])
+
+  // Request poster images for whichever cells are currently in view (plus
+  // buffer) — the feed hook fetches only as much as needed to fill them.
+  // Strictly-visible cells are listed before the buffer ring so they get
+  // priority when the fetch pool can't cover everything at once.
+  useEffect(() => {
+    if (cards.length === 0) return
+    const ordered = [...cards].sort((a, b) => Number(b.visible) - Number(a.visible))
+    ensureCells(ordered.map((c) => c.id))
+  }, [cards, ensureCells, filters])
 
   return (
     <div
@@ -324,9 +429,22 @@ export default function Canvas() {
           willChange: 'transform',
         }}
       >
-        {cards.map((card) => (
-          <PosterCard key={card.id} left={card.left} top={card.top} width={180} height={270} />
-        ))}
+        {cards.map((card) => {
+          const assignment = assignments.get(card.id)
+          return (
+            <PosterCard
+              key={card.id}
+              id={card.id}
+              left={card.left}
+              top={card.top}
+              width={180}
+              height={270}
+              posterUrl={assignment ? posterUrl(assignment.posterPath) : undefined}
+              title={assignment?.title}
+              highlighted={card.id === focusedCellId}
+            />
+          )
+        })}
       </div>
 
       <div
@@ -339,12 +457,23 @@ export default function Canvas() {
       />
 
       <Header />
+      <SearchBar onSelect={handleSelectMovie} />
+      <FilterPanel
+        filters={filters}
+        onChange={setFilters}
+        open={filterPanelOpen}
+        onClose={() => setFilterPanelOpen(false)}
+      />
       <ZoomControls
         scale={renderTransform.scale}
         onZoomIn={() => zoomButton(1.4)}
         onZoomOut={() => zoomButton(1 / 1.4)}
         onReset={resetView}
+        filtersOpen={filterPanelOpen}
+        onToggleFilters={() => setFilterPanelOpen((v) => !v)}
+        filtersActive={filtersActive}
       />
+      <MovieDetailModal selected={selectedMovie} onClose={() => setSelectedMovie(null)} />
     </div>
   )
 }

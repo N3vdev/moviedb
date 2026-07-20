@@ -21,4 +21,4 @@ export const WORLD_WIDTH = COLUMNS * CELL_WIDTH - GAP
 export const WORLD_HEIGHT = ROWS * CELL_HEIGHT - GAP
 
 export const MIN_SCALE = 0.3
-export const MAX_SCALE = 2.5
+export const MAX_SCALE = 1.3
