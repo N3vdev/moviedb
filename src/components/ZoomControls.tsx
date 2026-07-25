@@ -18,7 +18,7 @@ export default function ZoomControls({
   filtersActive,
 }: ZoomControlsProps) {
   return (
-    <div className="fixed bottom-6 right-6 z-10 flex items-center gap-1 rounded-full bg-[#1c1c22]/90 p-1.5 shadow-[0_8px_30px_rgba(0,0,0,0.6)] ring-1 ring-white/15 backdrop-blur-md">
+    <div className="glass-panel fixed bottom-6 right-6 z-10 flex items-center gap-1 rounded-full p-1.5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
       <button
         type="button"
         onClick={onToggleFilters}

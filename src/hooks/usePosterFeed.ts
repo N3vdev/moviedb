@@ -62,6 +62,13 @@ export function usePosterFeed(filters: FeedFilters) {
   const assignedCellsRef = useRef<Set<number>>(new Set())
   const pendingCellsRef = useRef<Set<number>>(new Set())
   const poolRef = useRef<TmdbItem[]>([])
+  // Remembers whatever was actually shown on each cell while browsing the
+  // unfiltered "Home" view. Narrowing to Movies/TV only hides the
+  // non-matching cells (see onlyMediaTypeChanged below) rather than
+  // discarding this, so widening back to "all" can restore the exact
+  // original mix from cache — instant, no network — instead of leaving
+  // whatever the narrower filter happened to backfill those cells with.
+  const homeSnapshotRef = useRef<Map<number, CellAssignment>>(new Map())
   const seenIdsRef = useRef<Set<string>>(new Set())
   const sourceRef = useRef<SourceKind>('trending')
   const pageRef = useRef(1)
@@ -77,41 +84,105 @@ export function usePosterFeed(filters: FeedFilters) {
 
   const filtersKey = filtersKeyOf(filters)
   const prevFiltersKeyRef = useRef(filtersKey)
+  const prevFiltersRef = useRef(filters)
 
-  // Filters changed (not just re-rendered with an equal object) — throw
-  // away the in-flight pool/assignments and restart the stream from the
-  // new source. Cells simply get re-requested next time they're visible.
+  // Filters changed (not just re-rendered with an equal object). A pure
+  // media-type narrowing/widening (e.g. the nav bar's Home/Movies/TV tabs,
+  // with genre/sort untouched) doesn't invalidate everything — a card
+  // already showing a movie is still correct when switching to "Movies",
+  // so only cells that no longer match get cleared and the rest keep
+  // showing instantly instead of flashing blank and re-fetching from
+  // scratch. Genre/sort changes really do invalidate everything, since
+  // "top rated" vs "popular" (etc.) can surface entirely different titles
+  // even within the same media type.
   useEffect(() => {
     if (prevFiltersKeyRef.current === filtersKey) return
+    const prevFilters = prevFiltersRef.current
     prevFiltersKeyRef.current = filtersKey
+    prevFiltersRef.current = filters
 
     generationRef.current += 1
-    poolRef.current = []
-    pendingCellsRef.current = new Set()
-    assignedCellsRef.current = new Set()
-    seenIdsRef.current = new Set()
-    pageRef.current = 1
-    sourceRef.current = isDefaultFilters(filters)
-      ? 'trending'
-      : filters.mediaType === 'tv'
-        ? 'tv'
-        : 'movie'
-    setAssignments(new Map())
-  }, [filtersKey, filters])
+
+    const sameGenres =
+      prevFilters.genreIds.length === filters.genreIds.length &&
+      prevFilters.genreIds.every((g) => filters.genreIds.includes(g))
+    const onlyMediaTypeChanged =
+      sameGenres && prevFilters.sortBy === filters.sortBy && prevFilters.mediaType !== filters.mediaType
+
+    if (onlyMediaTypeChanged) {
+      const stillValid = (mt: 'movie' | 'tv') => filters.mediaType === 'all' || filters.mediaType === mt
+
+      // Mutate assignedCellsRef synchronously here (not inside the
+      // setAssignments updater, which only runs on a later render) — the
+      // effect below that decides what to fetch runs in this same commit
+      // and needs the ref already pruned, or it computes zero cells as
+      // needing a refetch and nothing ever gets requested.
+      const next = new Map<number, CellAssignment>()
+      for (const [cellId, assignment] of assignments) {
+        if (stillValid(assignment.mediaType)) {
+          next.set(cellId, assignment)
+        } else {
+          assignedCellsRef.current.delete(cellId)
+        }
+      }
+
+      // Widening back to "Home" — bring back whatever was actually there
+      // before narrowing (e.g. the TV cards that Movies had hidden),
+      // instead of leaving the narrower filter's content in place. Pure
+      // cache restore: no network call, so this is instant regardless of
+      // how much of the grid needs to flip back.
+      if (filters.mediaType === 'all') {
+        for (const [cellId, homeAssignment] of homeSnapshotRef.current) {
+          const current = next.get(cellId)
+          if (
+            !current ||
+            current.tmdbId !== homeAssignment.tmdbId ||
+            current.mediaType !== homeAssignment.mediaType
+          ) {
+            next.set(cellId, homeAssignment)
+            assignedCellsRef.current.add(cellId)
+          }
+        }
+      }
+
+      setAssignments(next)
+      poolRef.current = poolRef.current.filter((item) => stillValid(item.mediaType))
+      pendingCellsRef.current = new Set()
+      pageRef.current = 1
+      sourceRef.current = isDefaultFilters(filters)
+        ? 'trending'
+        : filters.mediaType === 'tv'
+          ? 'tv'
+          : 'movie'
+    } else {
+      poolRef.current = []
+      pendingCellsRef.current = new Set()
+      assignedCellsRef.current = new Set()
+      seenIdsRef.current = new Set()
+      homeSnapshotRef.current = new Map()
+      pageRef.current = 1
+      sourceRef.current = isDefaultFilters(filters)
+        ? 'trending'
+        : filters.mediaType === 'tv'
+          ? 'tv'
+          : 'movie'
+      setAssignments(new Map())
+    }
+  }, [filtersKey, filters, assignments])
 
   const assignFromPool = useCallback(() => {
     if (poolRef.current.length === 0 || pendingCellsRef.current.size === 0) return
 
     const newlyAssigned: [number, CellAssignment][] = []
+    const recordHome = isDefaultFilters(filtersRef.current)
     for (const cellId of pendingCellsRef.current) {
       if (poolRef.current.length === 0) break
       const item = poolRef.current.shift()!
       assignedCellsRef.current.add(cellId)
       pendingCellsRef.current.delete(cellId)
-      newlyAssigned.push([
-        cellId,
-        { tmdbId: item.id, mediaType: item.mediaType, title: item.title, posterPath: item.posterPath },
-      ])
+      const assignment = { tmdbId: item.id, mediaType: item.mediaType, title: item.title, posterPath: item.posterPath }
+      newlyAssigned.push([cellId, assignment])
+      if (recordHome) homeSnapshotRef.current.set(cellId, assignment)
     }
 
     if (newlyAssigned.length > 0) {
@@ -226,14 +297,16 @@ export function usePosterFeed(filters: FeedFilters) {
     const cellId = hashToCell(item.id, item.mediaType)
     assignedCellsRef.current.add(cellId)
     pendingCellsRef.current.delete(cellId)
+    const assignment = {
+      tmdbId: item.id,
+      mediaType: item.mediaType,
+      title: item.title,
+      posterPath: item.posterPath,
+    }
+    if (isDefaultFilters(filtersRef.current)) homeSnapshotRef.current.set(cellId, assignment)
     setAssignments((prev) => {
       const next = new Map(prev)
-      next.set(cellId, {
-        tmdbId: item.id,
-        mediaType: item.mediaType,
-        title: item.title,
-        posterPath: item.posterPath,
-      })
+      next.set(cellId, assignment)
       return next
     })
     const row = Math.floor(cellId / COLUMNS)

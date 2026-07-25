@@ -132,6 +132,12 @@ export async function searchTitles(query: string): Promise<TmdbItem[]> {
 
 export const BACKDROP_IMAGE_BASE = 'https://image.tmdb.org/t/p/w780'
 
+export interface SeasonSummary {
+  seasonNumber: number
+  episodeCount: number
+  name: string
+}
+
 export interface MovieDetails {
   id: number
   mediaType: 'movie' | 'tv'
@@ -141,10 +147,12 @@ export interface MovieDetails {
   posterPath: string | null
   backdropPath: string | null
   year?: string
+  releaseDate?: string
   runtimeMinutes?: number
   voteAverage?: number
   voteCount?: number
   genres: string[]
+  seasons?: SeasonSummary[]
 }
 
 interface TmdbDetailsRaw {
@@ -162,6 +170,7 @@ interface TmdbDetailsRaw {
   vote_average?: number
   vote_count?: number
   genres?: { id: number; name: string }[]
+  seasons?: { season_number: number; episode_count: number; name: string }[]
 }
 
 export async function fetchMovieDetails(mediaType: 'movie' | 'tv', id: number): Promise<MovieDetails> {
@@ -175,10 +184,15 @@ export async function fetchMovieDetails(mediaType: 'movie' | 'tv', id: number): 
     posterPath: data.poster_path,
     backdropPath: data.backdrop_path,
     year: (data.release_date ?? data.first_air_date ?? '').slice(0, 4) || undefined,
+    releaseDate: data.release_date || data.first_air_date || undefined,
     runtimeMinutes: data.runtime || data.episode_run_time?.[0],
     voteAverage: data.vote_average,
     voteCount: data.vote_count,
     genres: (data.genres ?? []).map((g) => g.name),
+    seasons: data.seasons
+      ?.filter((s) => s.season_number > 0 && s.episode_count > 0)
+      .map((s) => ({ seasonNumber: s.season_number, episodeCount: s.episode_count, name: s.name }))
+      .sort((a, b) => a.seasonNumber - b.seasonNumber),
   }
 }
 

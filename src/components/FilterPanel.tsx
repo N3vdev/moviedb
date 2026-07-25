@@ -27,10 +27,6 @@ export default function FilterPanel({ filters, onChange, open, onClose }: Filter
 
   const genreOptions = filters.mediaType === 'tv' ? tvGenres : movieGenres
 
-  const setMediaType = (mediaType: FeedFilters['mediaType']) => {
-    onChange({ ...filters, mediaType, genreIds: [] })
-  }
-
   const toggleGenre = (id: number) => {
     const genreIds = filters.genreIds.includes(id)
       ? filters.genreIds.filter((g) => g !== id)
@@ -54,27 +50,8 @@ export default function FilterPanel({ filters, onChange, open, onClose }: Filter
       }`}
       aria-hidden={!open}
     >
-      <div className="flex flex-col gap-2 rounded-2xl bg-[#1c1c22]/90 px-4 py-3 shadow-[0_8px_30px_rgba(0,0,0,0.6)] ring-1 ring-white/10 backdrop-blur-md">
+      <div className="glass-panel flex flex-col gap-2 rounded-2xl px-4 py-3 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1 rounded-full bg-white/5 p-1">
-            {(['all', 'movie', 'tv'] as const).map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => setMediaType(type)}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                  filters.mediaType === type
-                    ? 'bg-white/15 text-white'
-                    : 'text-white/50 hover:text-white'
-                }`}
-              >
-                {type === 'all' ? 'All' : type === 'movie' ? 'Movies' : 'Series'}
-              </button>
-            ))}
-          </div>
-
-          <div className="h-5 w-px bg-white/10" />
-
           <div className="flex items-center gap-1 rounded-full bg-white/5 p-1">
             {SORT_OPTIONS.map((opt) => (
               <button

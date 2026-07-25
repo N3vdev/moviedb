@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 
 interface PosterCardProps {
   id: number
@@ -13,6 +13,24 @@ interface PosterCardProps {
 
 function PosterCard({ id, left, top, width, height, posterUrl, title, highlighted }: PosterCardProps) {
   const [loaded, setLoaded] = useState(false)
+  const imgRef = useRef<HTMLImageElement>(null)
+
+  // Cards are keyed by grid position, not by title — so a cell being
+  // reassigned to a different title (e.g. restoring Home's original mix
+  // after narrowing to Movies/TV) reuses the same component instance
+  // rather than mounting a fresh one. Re-arm the fade so the new poster
+  // cross-fades in instead of hard-cutting over the old one.
+  useEffect(() => {
+    setLoaded(false)
+    // If the browser already has this exact image cached (e.g. it's
+    // being restored to a title that was showing earlier), `complete`
+    // can already be true the instant src changes — before or racing
+    // with onLoad, which then never fires. Checking it directly here
+    // covers that case; onLoad still covers the genuine-network case.
+    if (imgRef.current?.complete && imgRef.current.naturalWidth > 0) {
+      setLoaded(true)
+    }
+  }, [posterUrl])
 
   return (
     <div
@@ -26,6 +44,7 @@ function PosterCard({ id, left, top, width, height, posterUrl, title, highlighte
     >
       {posterUrl && (
         <img
+          ref={imgRef}
           src={posterUrl}
           alt={title ?? ''}
           loading="lazy"

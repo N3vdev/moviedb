@@ -13,6 +13,10 @@ dist-ssr
 *.local
 .env
 
+# Personal easter-egg images/video — pulled from a private repo at CI build
+# time instead (see .github/workflows/deploy.yml), never committed here.
+public/img/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

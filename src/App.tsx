@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import Canvas from './components/Canvas'
 import IntroReveal from './components/IntroReveal'
+import Disclaimer from './components/Disclaimer'
 
 function App() {
   const [focused, setFocused] = useState(false)
@@ -30,6 +31,7 @@ function App() {
         <Canvas />
       </div>
       <IntroReveal />
+      <Disclaimer />
     </div>
   )
 }

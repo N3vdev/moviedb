@@ -3,8 +3,12 @@ import PosterCard from './PosterCard'
 import Header from './Header'
 import ZoomControls from './ZoomControls'
 import SearchBar from './SearchBar'
+import NavBar from './NavBar'
+import GlassRipple, { type RippleTrigger } from './GlassRipple'
 import FilterPanel from './FilterPanel'
 import MovieDetailModal, { type SelectedMovie } from './MovieDetailModal'
+import SpecialCardModal from './SpecialCardModal'
+import { getSpecialCardPosition, type SpecialCard } from '../lib/specialCards'
 import { usePosterFeed, DEFAULT_FILTERS, type FeedFilters } from '../hooks/usePosterFeed'
 import { posterUrl, type TmdbItem } from '../lib/tmdb'
 import {
@@ -74,9 +78,23 @@ export default function Canvas() {
 
   const [filters, setFilters] = useState<FeedFilters>(DEFAULT_FILTERS)
   const [filterPanelOpen, setFilterPanelOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const [focusedCellId, setFocusedCellId] = useState<number | null>(null)
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedMovie, setSelectedMovie] = useState<SelectedMovie | null>(null)
+  // The special card is revealed on the canvas the instant it's summoned
+  // via search, but it only opens its popup once the user taps it — and it
+  // disappears again once it's actually scrolled out of the viewport
+  // (tracked separately below), not just when the popup is closed.
+  const [activeSpecialCard, setActiveSpecialCard] = useState<{ card: SpecialCard; left: number; top: number } | null>(null)
+  const [openSpecialCard, setOpenSpecialCard] = useState<SpecialCard | null>(null)
+  const [rippleTrigger, setRippleTrigger] = useState<RippleTrigger | null>(null)
+  const rippleCounter = useRef(0)
+
+  const handleTabRipple = useCallback((origin: { x: number; y: number }) => {
+    rippleCounter.current += 1
+    setRippleTrigger({ x: origin.x, y: origin.y, key: rippleCounter.current })
+  }, [])
 
   const filtersActive =
     filters.mediaType !== 'all' || filters.genreIds.length > 0 || filters.sortBy !== 'popularity.desc'
@@ -257,16 +275,20 @@ export default function Canvas() {
     if (pointers.current.size === 0) {
       dragLast.current = null
       if (wasSinglePointer && dragDistanceRef.current < TAP_MOVE_THRESHOLD) {
-        const cardEl = (e.target as HTMLElement).closest?.('[data-card-id]')
-        const cellIdAttr = cardEl?.getAttribute('data-card-id')
-        if (cellIdAttr) handleCardTap(Number(cellIdAttr))
+        const cardEl = (e.target as HTMLElement).closest?.('[data-card-id], [data-special-card]')
+        if (cardEl?.hasAttribute('data-special-card')) {
+          if (activeSpecialCard) setOpenSpecialCard(activeSpecialCard.card)
+        } else {
+          const cellIdAttr = cardEl?.getAttribute('data-card-id')
+          if (cellIdAttr) handleCardTap(Number(cellIdAttr))
+        }
       }
       startInertia()
     } else if (pointers.current.size === 1) {
       const remaining = Array.from(pointers.current.values())[0]
       dragLast.current = { x: remaining.x, y: remaining.y }
     }
-  }, [startInertia, handleCardTap])
+  }, [startInertia, handleCardTap, activeSpecialCard])
 
   // Native (non-passive) wheel listener so we can preventDefault and stop
   // the page from scrolling while zooming the canvas.
@@ -345,6 +367,33 @@ export default function Canvas() {
     focusTimerRef.current = setTimeout(() => setFocusedCellId(null), FOCUS_HIGHLIGHT_MS)
   }, [focusMovie, focusOnCell])
 
+  // Special cards live at a fixed world position but should only ever
+  // become visible when explicitly summoned via search — so unlike
+  // focusOnCell, this jumps the camera there with zero animation (no
+  // transition at all) rather than gliding across.
+  const handleSelectSpecialCard = useCallback((card: SpecialCard) => {
+    cancelInertia()
+    const { left, top } = getSpecialCardPosition(card)
+    const el = worldRef.current
+    if (el) el.style.transition = 'none'
+    const centerX = left + CARD_WIDTH / 2
+    const centerY = top + CARD_HEIGHT / 2
+    applyTransform(
+      {
+        scale: FOCUS_SCALE,
+        x: size.width / 2 - centerX * FOCUS_SCALE,
+        y: size.height / 2 - centerY * FOCUS_SCALE,
+      },
+      true,
+    )
+    setActiveSpecialCard({ card, left, top })
+    // The click that triggered this (search result / dropdown item) already
+    // flipped isInteracting on via the shared pointerdown handler; cancelInertia
+    // above cancels the rAF that would've flipped it back off, so without this
+    // the world stays permanently pointer-events-none.
+    setInteracting(false)
+  }, [size, cancelInertia, applyTransform, setInteracting])
+
   useEffect(() => {
     return () => {
       if (focusTimerRef.current) clearTimeout(focusTimerRef.current)
@@ -403,6 +452,25 @@ export default function Canvas() {
     ensureCells(ordered.map((c) => c.id))
   }, [cards, ensureCells, filters])
 
+  // A summoned special card only ever exists on the canvas while its cell
+  // is actually within the viewport — once the user pans/zooms it out of
+  // view, it disappears (and closes its popup if it was open).
+  useEffect(() => {
+    if (!activeSpecialCard || size.width === 0) return
+    const t = renderTransform
+    const viewLeft = -t.x / t.scale
+    const viewTop = -t.y / t.scale
+    const viewRight = viewLeft + size.width / t.scale
+    const viewBottom = viewTop + size.height / t.scale
+    const centerX = activeSpecialCard.left + CARD_WIDTH / 2
+    const centerY = activeSpecialCard.top + CARD_HEIGHT / 2
+    const inView = centerX >= viewLeft && centerX <= viewRight && centerY >= viewTop && centerY <= viewBottom
+    if (!inView) {
+      setActiveSpecialCard(null)
+      setOpenSpecialCard(null)
+    }
+  }, [renderTransform, activeSpecialCard, size])
+
   return (
     <div
       ref={containerRef}
@@ -445,6 +513,26 @@ export default function Canvas() {
             />
           )
         })}
+
+        {activeSpecialCard && (
+          <div
+            data-special-card="true"
+            style={{
+              position: 'absolute',
+              left: activeSpecialCard.left,
+              top: activeSpecialCard.top,
+              width: CARD_WIDTH,
+              height: CARD_HEIGHT,
+            }}
+            className="z-20 cursor-pointer overflow-hidden rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.35)] ring-2 ring-white transition-transform duration-200 ease-out hover:scale-[1.05]"
+          >
+            <img
+              src={activeSpecialCard.card.cardImage}
+              alt={activeSpecialCard.card.name}
+              className="h-full w-full object-cover"
+            />
+          </div>
+        )}
       </div>
 
       <div
@@ -457,7 +545,26 @@ export default function Canvas() {
       />
 
       <Header />
-      <SearchBar onSelect={handleSelectMovie} />
+      <NavBar
+        filters={filters}
+        onChangeFilters={setFilters}
+        searchOpen={searchOpen}
+        onToggleSearch={() => setSearchOpen((v) => !v)}
+        onTabRipple={handleTabRipple}
+      />
+      <GlassRipple trigger={rippleTrigger} />
+      <SearchBar
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSelect={(item) => {
+          handleSelectMovie(item)
+          setSearchOpen(false)
+        }}
+        onSelectSpecial={(card) => {
+          handleSelectSpecialCard(card)
+          setSearchOpen(false)
+        }}
+      />
       <FilterPanel
         filters={filters}
         onChange={setFilters}
@@ -474,6 +581,7 @@ export default function Canvas() {
         filtersActive={filtersActive}
       />
       <MovieDetailModal selected={selectedMovie} onClose={() => setSelectedMovie(null)} />
+      <SpecialCardModal selected={openSpecialCard} onClose={() => setOpenSpecialCard(null)} />
     </div>
   )
 }

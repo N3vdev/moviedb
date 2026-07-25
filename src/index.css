@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@fontsource-variable/nunito";
 
 :root {
   color-scheme: dark;
@@ -16,7 +17,7 @@ body,
   overflow: hidden;
   background: #08080a;
   color: #e5e5e5;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+  font-family: 'Nunito Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -50,3 +51,21 @@ body,
   inherits: false;
   initial-value: 0%;
 }
+
+/* Shared frosted-glass surface for the nav bar, search, filter panel and
+   zoom controls — a real backdrop blur + saturation boost rather than a
+   near-opaque solid fill, so the canvas visibly shows through. */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  /* A faint top rim-light and bottom shade, like light catching a curved
+     glass edge, plus a transition so hover/active state changes underneath
+     never feel like an abrupt cut. */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.15);
+  transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+
