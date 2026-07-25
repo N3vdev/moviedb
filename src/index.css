@@ -57,8 +57,8 @@ body,
    near-opaque solid fill, so the canvas visibly shows through. */
 .glass-panel {
   background: rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(28px) saturate(160%);
   -webkit-backdrop-filter: blur(28px) saturate(160%);
+  backdrop-filter: blur(28px) saturate(160%);
   border: 1px solid rgba(255, 255, 255, 0.14);
   /* A faint top rim-light and bottom shade, like light catching a curved
      glass edge, plus a transition so hover/active state changes underneath
