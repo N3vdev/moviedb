@@ -8,6 +8,7 @@ import GlassRipple, { type RippleTrigger } from './GlassRipple'
 import FilterPanel from './FilterPanel'
 import MovieDetailModal, { type SelectedMovie } from './MovieDetailModal'
 import SpecialCardModal from './SpecialCardModal'
+import AboutModal from './AboutModal'
 import { getSpecialCardPosition, type SpecialCard } from '../lib/specialCards'
 import { usePosterFeed, DEFAULT_FILTERS, type FeedFilters } from '../hooks/usePosterFeed'
 import { posterUrl, type TmdbItem } from '../lib/tmdb'
@@ -28,6 +29,11 @@ const FOCUS_SCALE = 1.15
 const FOCUS_HIGHLIGHT_MS = 2600
 const FOCUS_PAN_DURATION_MS = 1200
 const TAP_MOVE_THRESHOLD = 6
+// Matches Tailwind's `sm` breakpoint, used elsewhere for the same mobile/
+// desktop split (e.g. Header's logo visibility).
+const MOBILE_BREAKPOINT = 640
+const MOBILE_DEFAULT_SCALE = 0.9
+const defaultScaleFor = (width: number) => (width < MOBILE_BREAKPOINT ? MOBILE_DEFAULT_SCALE : 1)
 
 interface Transform {
   x: number
@@ -88,6 +94,7 @@ export default function Canvas() {
   // (tracked separately below), not just when the popup is closed.
   const [activeSpecialCard, setActiveSpecialCard] = useState<{ card: SpecialCard; left: number; top: number } | null>(null)
   const [openSpecialCard, setOpenSpecialCard] = useState<SpecialCard | null>(null)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const [rippleTrigger, setRippleTrigger] = useState<RippleTrigger | null>(null)
   const rippleCounter = useRef(0)
 
@@ -160,11 +167,12 @@ export default function Canvas() {
   useEffect(() => {
     if (hasCentered.current || size.width === 0 || size.height === 0) return
     hasCentered.current = true
+    const scale = defaultScaleFor(size.width)
     applyTransform(
       {
-        x: (size.width - WORLD_WIDTH) / 2,
-        y: (size.height - WORLD_HEIGHT) / 2,
-        scale: 1,
+        x: (size.width - WORLD_WIDTH * scale) / 2,
+        y: (size.height - WORLD_HEIGHT * scale) / 2,
+        scale,
       },
       true,
     )
@@ -196,6 +204,21 @@ export default function Canvas() {
   const zoomAt = useCallback((clientX: number, clientY: number, factor: number) => {
     const t = transformRef.current
     const newScale = clamp(t.scale * factor, MIN_SCALE, MAX_SCALE)
+    const worldX = (clientX - t.x) / t.scale
+    const worldY = (clientY - t.y) / t.scale
+    applyTransform({
+      scale: newScale,
+      x: clientX - worldX * newScale,
+      y: clientY - worldY * newScale,
+    })
+  }, [applyTransform])
+
+  // Same math as zoomAt, but takes an absolute target scale rather than a
+  // multiplicative factor — used by the +/- buttons so each press lands
+  // exactly on a clean 10% step instead of compounding a ratio.
+  const zoomToScale = useCallback((clientX: number, clientY: number, targetScale: number) => {
+    const t = transformRef.current
+    const newScale = clamp(targetScale, MIN_SCALE, MAX_SCALE)
     const worldX = (clientX - t.x) / t.scale
     const worldY = (clientY - t.y) / t.scale
     applyTransform({
@@ -312,28 +335,36 @@ export default function Canvas() {
     return () => el.removeEventListener('wheel', handleWheel)
   }, [zoomAt, cancelInertia, setInteracting])
 
-  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect) return
-    cancelInertia()
-    zoomAt(e.clientX - rect.left, e.clientY - rect.top, 1.6)
-  }, [zoomAt, cancelInertia])
-
-  const zoomButton = useCallback((factor: number) => {
+  // Steps to the next/previous clean multiple of 10% from wherever the
+  // scale currently sits (which may be off-grid from a pinch/wheel gesture)
+  // — rounding down then adding 10 (or up then subtracting 10) guarantees
+  // landing exactly on a multiple of 10 while always moving in the
+  // requested direction by a meaningful amount.
+  const zoomButton = useCallback((direction: 1 | -1) => {
     cancelInertia()
     setInteracting(false)
-    zoomAt(size.width / 2, size.height / 2, factor)
+    // Round to the nearest whole percent first — floating-point round-trips
+    // through scale = percent / 100 leave tiny drift (e.g. 110.00000000000001),
+    // which is enough to make Math.ceil/floor below think it's not already
+    // on a clean multiple and skip a step.
+    const currentPercent = Math.round(transformRef.current.scale * 100)
+    const targetPercent =
+      direction === 1
+        ? Math.floor(currentPercent / 10) * 10 + 10
+        : Math.ceil(currentPercent / 10) * 10 - 10
+    zoomToScale(size.width / 2, size.height / 2, targetPercent / 100)
     setRenderTransform(transformRef.current)
-  }, [size, zoomAt, cancelInertia, setInteracting])
+  }, [size, zoomToScale, cancelInertia, setInteracting])
 
   const resetView = useCallback(() => {
     cancelInertia()
     setInteracting(false)
+    const scale = defaultScaleFor(size.width)
     applyTransform(
       {
-        x: (size.width - WORLD_WIDTH) / 2,
-        y: (size.height - WORLD_HEIGHT) / 2,
-        scale: 1,
+        x: (size.width - WORLD_WIDTH * scale) / 2,
+        y: (size.height - WORLD_HEIGHT * scale) / 2,
+        scale,
       },
       true,
     )
@@ -478,7 +509,6 @@ export default function Canvas() {
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
-      onDoubleClick={handleDoubleClick}
       className="relative h-full w-full touch-none overflow-hidden bg-[#08080a] cursor-grab active:cursor-grabbing"
       style={{
         backgroundImage:
@@ -538,13 +568,18 @@ export default function Canvas() {
       <div
         className="pointer-events-none absolute inset-0"
         style={{
-          boxShadow: 'inset 0 0 320px 90px rgba(0,0,0,0.95)',
+          // Fixed pixel blur/spread here would eat a much bigger share of a
+          // narrow phone viewport than a desktop one (same 320px/90px reads
+          // as "edge falloff" on a 1440px-wide screen but "darkens the
+          // center" on a 390px one) — scale with the viewport instead so
+          // the clear center stays proportionally consistent everywhere.
+          boxShadow: 'inset 0 0 clamp(120px, 34vmin, 320px) clamp(28px, 9vmin, 90px) rgba(0,0,0,0.95)',
           background:
             'radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,0.8) 100%)',
         }}
       />
 
-      <Header />
+      <Header onOpenAbout={() => setAboutOpen(true)} />
       <NavBar
         filters={filters}
         onChangeFilters={setFilters}
@@ -573,15 +608,17 @@ export default function Canvas() {
       />
       <ZoomControls
         scale={renderTransform.scale}
-        onZoomIn={() => zoomButton(1.4)}
-        onZoomOut={() => zoomButton(1 / 1.4)}
+        onZoomIn={() => zoomButton(1)}
+        onZoomOut={() => zoomButton(-1)}
         onReset={resetView}
         filtersOpen={filterPanelOpen}
         onToggleFilters={() => setFilterPanelOpen((v) => !v)}
         filtersActive={filtersActive}
+        onOpenAbout={() => setAboutOpen(true)}
       />
       <MovieDetailModal selected={selectedMovie} onClose={() => setSelectedMovie(null)} />
       <SpecialCardModal selected={openSpecialCard} onClose={() => setOpenSpecialCard(null)} />
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </div>
   )
 }

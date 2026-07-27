@@ -93,10 +93,17 @@ export default function SearchBar({ open, onClose, onSelect, onSelectSpecial }: 
 
   useEffect(() => {
     if (!open) return
+    // The toggle button that opens this panel lives in NavBar, outside our
+    // own containerRef — so clicking it to close would otherwise also
+    // count as an "outside" click and immediately re-open what it just
+    // closed (or vice versa). Excluding it by its data-search-toggle marker
+    // means the button's own onClick is the single source of truth for
+    // toggling, and this listener only ever handles genuine outside clicks.
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        onClose()
-      }
+      const target = e.target as Node
+      if (containerRef.current?.contains(target)) return
+      if ((target as HTMLElement).closest?.('[data-search-toggle]')) return
+      onClose()
     }
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -126,9 +133,18 @@ export default function SearchBar({ open, onClose, onSelect, onSelectSpecial }: 
   }
 
   return (
+    // Only `transform` is transitioned here — opacity flips instantly
+    // (no transition-opacity) rather than easing. Verified via frame-by-
+    // frame capture: animating opacity on an element with backdrop-filter
+    // makes Chromium render the blur at reduced/no quality for the first
+    // several frames of that opacity transition, then "catch up" once it
+    // settles — which is exactly the late-blur pop the panel is dropping
+    // in with a beat of un-blurred backdrop. A pure transform animation
+    // doesn't trigger that degradation, so the slide stays buttery while
+    // the glass blur is correct from the very first frame.
     <div
       ref={containerRef}
-      className={`fixed left-1/2 top-24 z-20 w-full max-w-lg -translate-x-1/2 px-4 transition-all duration-200 ease-out ${
+      className={`fixed left-1/2 top-24 z-20 w-full max-w-lg -translate-x-1/2 px-4 transition-transform duration-200 ease-out ${
         open ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-2 opacity-0'
       }`}
       aria-hidden={!open}

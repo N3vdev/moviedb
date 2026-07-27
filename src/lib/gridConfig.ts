@@ -3,7 +3,7 @@
 // can scale up to a "world's worth" of posters without a performance hit.
 export const CARD_WIDTH = 180
 export const CARD_HEIGHT = 270
-export const GAP = 28
+export const GAP = 18
 
 // Sized to represent a library on the order of "every film and series
 // worldwide". Rendering cost is independent of these numbers — Canvas.tsx

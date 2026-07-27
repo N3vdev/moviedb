@@ -74,6 +74,7 @@ export default function NavBar({
 
         <motion.button
           type="button"
+          data-search-toggle="true"
           onClick={onToggleSearch}
           whileTap={{ scale: 0.9 }}
           aria-label="Search"

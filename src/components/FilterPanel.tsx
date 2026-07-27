@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 import { fetchGenres, type Genre } from '../lib/tmdb'
 import type { FeedFilters } from '../hooks/usePosterFeed'
 import { DEFAULT_FILTERS } from '../hooks/usePosterFeed'
+
+const PANEL_SPRING = { type: 'spring', stiffness: 420, damping: 36, mass: 0.8 } as const
 
 interface FilterPanelProps {
   filters: FeedFilters
@@ -43,14 +46,20 @@ export default function FilterPanel({ filters, onChange, open, onClose }: Filter
 
   return (
     <div
-      className={`fixed bottom-6 left-1/2 z-10 w-full max-w-3xl -translate-x-1/2 px-4 transition-all duration-300 ease-out ${
-        open
-          ? 'translate-y-0 opacity-100'
-          : 'pointer-events-none translate-y-4 opacity-0'
-      }`}
+      className={`fixed bottom-24 left-1/2 z-10 w-full max-w-3xl -translate-x-1/2 px-4 ${open ? '' : 'pointer-events-none'}`}
       aria-hidden={!open}
     >
-      <div className="glass-panel flex flex-col gap-2 rounded-2xl px-4 py-3 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
+      <motion.div
+        initial={false}
+        animate={{
+          opacity: open ? 1 : 0,
+          scale: open ? 1 : 0.94,
+          y: open ? 0 : 16,
+          filter: open ? 'blur(0px)' : 'blur(6px)',
+        }}
+        transition={PANEL_SPRING}
+        style={{ transformOrigin: 'bottom center', willChange: 'transform, opacity, filter' }}
+        className="glass-panel flex flex-col gap-2 rounded-2xl px-4 py-3 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1 rounded-full bg-white/5 p-1">
             {SORT_OPTIONS.map((opt) => (
@@ -114,7 +123,7 @@ export default function FilterPanel({ filters, onChange, open, onClose }: Filter
             })}
           </div>
         )}
-      </div>
+      </motion.div>
     </div>
   )
 }

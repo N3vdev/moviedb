@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
+import { useEffect, useRef, useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { BACKDROP_IMAGE_BASE, fetchMovieDetails, posterUrl, type MovieDetails } from '../lib/tmdb'
 import Dropdown from './Dropdown'
 
@@ -14,6 +14,14 @@ interface MovieDetailModalProps {
 }
 
 const WATCH_EMBED_BASE = 'https://player.vidlove.cc/embed'
+const WATCH_EMBED_BASE_ALT = 'https://vidsrcme.ru/embed'
+// There's no reliable way to detect whether the primary source actually
+// found and is playing the title (cross-origin iframe — no postMessage API,
+// same-origin policy blocks reading its DOM, and its backend is behind bot
+// protection that blocks external checks). Rather than guess at success/
+// failure, just offer a manual escape hatch to a second, independent
+// provider a couple seconds in.
+const ALT_SOURCE_PROMPT_MS = 2000
 
 // Spring (not a fixed-duration ease) so the card settles with a touch of
 // liquid weight rather than a mechanical linear-feeling snap — the same
@@ -28,7 +36,34 @@ export default function MovieDetailModal({ selected, onClose }: MovieDetailModal
   const [showPlayer, setShowPlayer] = useState(false)
   const [season, setSeason] = useState(1)
   const [episode, setEpisode] = useState(1)
+  const [useAltSource, setUseAltSource] = useState(false)
+  const [showAltPrompt, setShowAltPrompt] = useState(false)
+  const altTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const open = selected !== null
+
+  const embedSrc =
+    details &&
+    (useAltSource
+      ? details.mediaType === 'tv'
+        ? `${WATCH_EMBED_BASE_ALT}/tv?tmdb=${details.id}&season=${season}&episode=${episode}`
+        : `${WATCH_EMBED_BASE_ALT}/movie?tmdb=${details.id}`
+      : details.mediaType === 'tv'
+        ? `${WATCH_EMBED_BASE}/tv/${details.id}/${season}/${episode}`
+        : `${WATCH_EMBED_BASE}/movie/${details.id}`)
+
+  // The "try alternative source" button shows a couple seconds into loading
+  // any source (primary or alt) — restarts whenever the embed src changes,
+  // e.g. opening the player or switching season/episode.
+  useEffect(() => {
+    if (altTimerRef.current) clearTimeout(altTimerRef.current)
+    setShowAltPrompt(false)
+    if (!showPlayer || !embedSrc) return
+    altTimerRef.current = setTimeout(() => setShowAltPrompt(true), ALT_SOURCE_PROMPT_MS)
+    return () => {
+      if (altTimerRef.current) clearTimeout(altTimerRef.current)
+    }
+  }, [showPlayer, embedSrc])
 
   useEffect(() => {
     if (!selected) return
@@ -36,6 +71,7 @@ export default function MovieDetailModal({ selected, onClose }: MovieDetailModal
     setLoading(true)
     setFailed(false)
     setShowPlayer(false)
+    setUseAltSource(false)
     fetchMovieDetails(selected.mediaType, selected.id)
       .then((d) => {
         if (!cancelled) {
@@ -64,6 +100,14 @@ export default function MovieDetailModal({ selected, onClose }: MovieDetailModal
     return () => document.removeEventListener('keydown', handleKey)
   }, [open, onClose])
 
+  // Closing only fades the modal out — the iframe stays mounted (and its
+  // video/audio keeps running) unless we also drop back out of player view,
+  // which unmounts it. Covers every way the modal can close (X button,
+  // Escape, backdrop click) since they all funnel through `selected`.
+  useEffect(() => {
+    if (!open) setShowPlayer(false)
+  }, [open])
+
   const isUnreleased = Boolean(details && (!details.releaseDate || new Date(details.releaseDate) > new Date()))
 
   return (
@@ -80,16 +124,37 @@ export default function MovieDetailModal({ selected, onClose }: MovieDetailModal
       />
 
       <motion.div
+        ref={panelRef}
         onClick={(e) => e.stopPropagation()}
         initial={false}
         animate={{
           opacity: open ? 1 : 0,
           scale: open ? 1 : 0.92,
-          filter: open ? 'blur(0px)' : 'blur(14px)',
         }}
         transition={MODAL_SPRING}
-        style={{ willChange: 'transform, opacity, filter' }}
-        className="relative max-h-[88vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-[#141418] shadow-[0_30px_90px_rgba(0,0,0,0.8)] ring-1 ring-white/10 sm:max-w-2xl md:max-w-3xl lg:max-w-4xl"
+        onAnimationComplete={() => {
+          // Chromium treats ANY ancestor with a non-`none` transform — or
+          // even just `will-change: transform` — as reason to create a
+          // containing block, which silently breaks requestFullscreen()
+          // calls made by nested content (e.g. the embedded video player's
+          // own fullscreen button). Framer Motion leaves `transform` as an
+          // inline style even once settled at its identity value, so once
+          // the open animation finishes, strip it — restored automatically
+          // when the close animation starts, since Motion tracks the real
+          // value internally rather than reading it back from the DOM.
+          if (open && panelRef.current) {
+            panelRef.current.style.transform = ''
+            // 'auto', not '' — clearing to empty just falls back to
+            // .glass-panel's own `will-change: backdrop-filter` rule, which
+            // (per newer spec) can also establish a containing block. An
+            // explicit 'auto' overrides that rule outright.
+            panelRef.current.style.willChange = 'auto'
+          }
+        }}
+        style={{ willChange: 'transform, opacity' }}
+        className={`glass-panel relative max-h-[88vh] w-full max-w-xl overflow-y-auto rounded-2xl shadow-[0_30px_90px_rgba(0,0,0,0.8)] transition-[filter] duration-300 ease-out sm:max-w-2xl md:max-w-3xl lg:max-w-4xl ${
+          open ? 'blur-none' : 'blur-[14px]'
+        }`}
       >
         <button
           type="button"
@@ -119,15 +184,12 @@ export default function MovieDetailModal({ selected, onClose }: MovieDetailModal
             {showPlayer ? (
               <div className="relative aspect-video w-full bg-black">
                 <iframe
-                  src={
-                    details.mediaType === 'tv'
-                      ? `${WATCH_EMBED_BASE}/tv/${details.id}/${season}/${episode}`
-                      : `${WATCH_EMBED_BASE}/movie/${details.id}`
-                  }
+                  key={embedSrc}
+                  src={embedSrc ?? undefined}
                   title={`Watch ${details.title}`}
                   allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
                   allowFullScreen
-                  referrerPolicy="no-referrer"
+                  referrerPolicy={useAltSource ? 'origin' : 'no-referrer'}
                   className="absolute inset-0 h-full w-full"
                 />
                 <button
@@ -140,6 +202,25 @@ export default function MovieDetailModal({ selected, onClose }: MovieDetailModal
                   </svg>
                   Details
                 </button>
+                <AnimatePresence>
+                  {showAltPrompt && (
+                    <motion.button
+                      type="button"
+                      onClick={() => setUseAltSource((v) => !v)}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 8 }}
+                      transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                      className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/70 px-4 py-2 text-xs font-medium text-white/85 shadow-[0_10px_30px_rgba(0,0,0,0.6)] backdrop-blur-md transition-colors hover:bg-black/85 hover:text-white"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M4 4v6h6M20 20v-6h-6" />
+                        <path d="M20 10a8 8 0 0 0-14.6-4.6M4 14a8 8 0 0 0 14.6 4.6" />
+                      </svg>
+                      {useAltSource ? 'Switch back to original source' : "Doesn't load? Try alternative source"}
+                    </motion.button>
+                  )}
+                </AnimatePresence>
               </div>
             ) : (
               <div className="relative h-48 w-full bg-[#1c1c22] sm:h-60 md:h-72">
@@ -150,7 +231,7 @@ export default function MovieDetailModal({ selected, onClose }: MovieDetailModal
                     className="h-full w-full object-cover"
                   />
                 )}
-                <div className="absolute inset-0 bg-linear-to-t from-[#141418] via-[#141418]/30 to-transparent" />
+                <div className="absolute inset-0 bg-linear-to-t from-black/90 via-black/40 to-transparent" />
               </div>
             )}
 
@@ -202,7 +283,10 @@ export default function MovieDetailModal({ selected, onClose }: MovieDetailModal
                     )}
                     <button
                       type="button"
-                      onClick={() => setShowPlayer(true)}
+                      onClick={() => {
+                        setUseAltSource(false)
+                        setShowPlayer(true)
+                      }}
                       className="mt-3 inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black transition-colors hover:bg-white/90"
                     >
                       <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">

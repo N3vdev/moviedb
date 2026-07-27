@@ -67,5 +67,12 @@ body,
     inset 0 1px 0 rgba(255, 255, 255, 0.25),
     inset 0 -1px 0 rgba(0, 0, 0, 0.15);
   transition: background-color 0.3s ease, box-shadow 0.3s ease;
+  /* Force this onto its own GPU-composited layer up front. Without this,
+     the browser skips building the backdrop-blur layer while an element is
+     invisible (opacity: 0 / just mounted) and only builds it the moment it
+     needs to be shown — which reads as the blur "popping in" a beat after
+     the panel itself appears. Promoting the layer eagerly keeps it warm. */
+  transform: translateZ(0);
+  will-change: backdrop-filter;
 }
 

@@ -6,6 +6,7 @@ interface ZoomControlsProps {
   filtersOpen: boolean
   onToggleFilters: () => void
   filtersActive: boolean
+  onOpenAbout: () => void
 }
 
 export default function ZoomControls({
@@ -16,6 +17,7 @@ export default function ZoomControls({
   filtersOpen,
   onToggleFilters,
   filtersActive,
+  onOpenAbout,
 }: ZoomControlsProps) {
   return (
     <div className="glass-panel fixed bottom-6 right-6 z-10 flex items-center gap-1 rounded-full p-1.5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
@@ -67,6 +69,19 @@ export default function ZoomControls({
         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.75">
           <path d="M4 4v6h6M20 20v-6h-6" />
           <path d="M20 10a8 8 0 0 0-14.6-4.6M4 14a8 8 0 0 0 14.6 4.6" />
+        </svg>
+      </button>
+      <div className="mx-1 h-5 w-px bg-white/15" />
+      <button
+        type="button"
+        onClick={onOpenAbout}
+        aria-label="About & disclaimer"
+        className="flex h-9 w-9 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/15 hover:text-white"
+      >
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5" strokeLinecap="round" />
+          <circle cx="12" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
         </svg>
       </button>
     </div>
