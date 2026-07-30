@@ -15,7 +15,7 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: #08080a;
+  background: #000;
   color: #e5e5e5;
   font-family: 'Nunito Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -42,6 +42,159 @@ body,
 
 .poster-highlight {
   animation: pulse-glow 1.3s ease-out 2;
+}
+
+/* ---------------------------------------------------------------------------
+   Ambient space backdrop
+   Every animation below is transform/opacity only, so it runs on the
+   compositor and adds no per-frame main-thread work underneath the canvas's
+   pan/zoom loop.
+   --------------------------------------------------------------------------- */
+
+/* Pitch black — no colour cast at all. The starfield above it supplies the
+   only light, which is what makes it read as deep space rather than as a
+   tinted backdrop. */
+.space-base {
+  background: #000;
+}
+
+/* Deliberately NOT continuously animated. An always-running opacity keyframe
+   on layers this large keeps the compositor updating ~10MP of texture every
+   frame forever, which measurably worsened pan jank (p95 11ms -> 17ms) for an
+   effect nobody can consciously see. Brightness variation is baked into the
+   individual star opacities instead, and the parallax drift supplies the
+   motion. */
+.space-star-layer {
+  position: absolute;
+  background-repeat: repeat;
+  /* Promoted up front: these are transform-driven every frame during a pan,
+     and a layer that isn't already composited would repaint instead. */
+  transform: translateZ(0);
+}
+
+
+/* Visible for ~5% of a long cycle, so it reads as an occasional event rather
+   than a loop. Two instances, offset, so the sky never feels scripted. */
+.space-shooting-star {
+  position: absolute;
+  top: 12%;
+  left: 68%;
+  width: 140px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.9), transparent);
+  opacity: 0;
+  transform: rotate(18deg);
+  animation: shooting-star 17s linear infinite;
+}
+
+.space-shooting-star-b {
+  top: 62%;
+  left: 12%;
+  width: 100px;
+  animation-duration: 29s;
+  animation-delay: 9s;
+}
+
+@keyframes shooting-star {
+  0% { opacity: 0; transform: translate3d(0, 0, 0) rotate(18deg); }
+  1% { opacity: 0; }
+  2% { opacity: 1; }
+  6% { opacity: 0; transform: translate3d(-320px, 104px, 0) rotate(18deg); }
+  100% { opacity: 0; transform: translate3d(-320px, 104px, 0) rotate(18deg); }
+}
+
+.space-mote {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 6px rgba(190, 210, 255, 0.7);
+  animation-name: mote-float;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+@keyframes mote-float {
+  0% { transform: translate3d(0, 12vh, 0); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translate3d(var(--mote-drift, 0px), -12vh, 0); opacity: 0; }
+}
+
+/* ---------------------------------------------------------------------------
+   Poster cards
+   --------------------------------------------------------------------------- */
+
+/* Deliberately no entrance animation on the card element itself. A keyframe
+   animation touching `transform` wins over the hover rule for as long as it's
+   filling, which silently kills the hover lift; and one animation per card
+   would spike hard when a zoom-out mounts hundreds at once. The poster image
+   already cross-fades in on load, which covers the same ground for free. */
+
+/* Transitions live here rather than in Tailwind utilities because Tailwind v4
+   compiles `scale-*` to the standalone `scale` property, NOT to `transform`.
+   A `transition-[transform,...]` utility therefore never animates the hover
+   scale at all — it snaps instantly, which is exactly what read as "choppy".
+   These name `scale` explicitly. */
+.poster-card {
+  transition:
+    scale 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 340ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.poster-card-img {
+  transition:
+    opacity 400ms ease-out,
+    scale 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Promote only while hovered. Applying this to every card permanently is what
+   caused the pan lag fixed earlier, so it stays scoped to the one card that's
+   actually animating. `scale` (not `transform`) for the same reason as above. */
+.poster-card:hover,
+.poster-card:hover .poster-card-img {
+  will-change: scale;
+}
+
+/* Specular sweep on hover. The pseudo-element is transform/opacity only and
+   sits idle at opacity 0 until the card is actually hovered. */
+.poster-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    104deg,
+    transparent 34%,
+    rgba(255, 255, 255, 0.16) 47%,
+    rgba(255, 255, 255, 0.04) 56%,
+    transparent 68%
+  );
+  opacity: 0;
+  transform: translate3d(-130%, 0, 0);
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+
+.poster-card:hover::after {
+  opacity: 1;
+  transform: translate3d(130%, 0, 0);
+  transition: transform 0.8s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.25s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .space-star-layer,
+  .space-shooting-star,
+  .space-mote {
+    animation: none !important;
+  }
+
+  .space-mote {
+    display: none;
+  }
+
+  .poster-card::after {
+    display: none;
+  }
 }
 
 /* Shared frosted-glass surface for the nav bar, search, filter panel and

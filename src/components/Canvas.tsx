@@ -5,6 +5,7 @@ import ZoomControls from './ZoomControls'
 import SearchBar from './SearchBar'
 import NavBar from './NavBar'
 import GlassRipple, { type RippleTrigger } from './GlassRipple'
+import SpaceBackdrop, { SpaceVeil, type SpaceBackdropHandle } from './SpaceBackdrop'
 import FilterPanel from './FilterPanel'
 import MovieDetailModal, { type SelectedMovie } from './MovieDetailModal'
 import SpecialCardModal from './SpecialCardModal'
@@ -58,6 +59,7 @@ const midpoint = (a: Point, b: Point) => ({
 export default function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null)
   const worldRef = useRef<HTMLDivElement>(null)
+  const backdropRef = useRef<SpaceBackdropHandle>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [isInteracting, setIsInteracting] = useState(false)
 
@@ -133,6 +135,10 @@ export default function Canvas() {
     if (el) {
       el.style.transform = `translate3d(${t.x}px, ${t.y}px, 0) scale(${t.scale})`
     }
+    // Drift the starfield by a small fraction of the same pan, which is what
+    // gives the canvas a sense of depth. Three compositor-only style writes —
+    // cheap enough to sit directly on the drag/inertia hot path.
+    backdropRef.current?.setParallax(t.x, t.y)
     if (immediate) {
       setRenderTransform(t)
     } else {
@@ -142,15 +148,20 @@ export default function Canvas() {
 
   const setInteracting = useCallback((flag: boolean, durationMs = 300) => {
     setIsInteracting(flag)
+    const transition = flag ? 'none' : `transform ${durationMs}ms cubic-bezier(0.16, 1, 0.3, 1)`
     const el = worldRef.current
     if (el) {
-      el.style.transition = flag ? 'none' : `transform ${durationMs}ms cubic-bezier(0.16, 1, 0.3, 1)`
+      el.style.transition = transition
     }
+    // Mirror it so animated pans (search focus, reset, zoom buttons) glide the
+    // sky along with the world instead of snapping it.
+    backdropRef.current?.setTransition(transition)
   }, [])
 
   useLayoutEffect(() => {
     const el = worldRef.current
     if (el) el.style.transition = 'none'
+    backdropRef.current?.setTransition('none')
   }, [])
 
   // Track viewport size so the world can be centered and cards can be
@@ -613,13 +624,10 @@ export default function Canvas() {
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
-      className="relative h-full w-full touch-none overflow-hidden bg-[#08080a] cursor-grab active:cursor-grabbing"
-      style={{
-        backgroundImage:
-          'radial-gradient(circle at 1px 1px, rgba(255,255,255,0.06) 1px, transparent 0)',
-        backgroundSize: '32px 32px',
-      }}
+      className="relative h-full w-full touch-none overflow-hidden bg-black cursor-grab active:cursor-grabbing"
     >
+      <SpaceBackdrop ref={backdropRef} />
+
       <div
         ref={worldRef}
         className={isInteracting ? 'pointer-events-none' : ''}
@@ -670,6 +678,8 @@ export default function Canvas() {
         )}
       </div>
 
+      <SpaceVeil />
+
       <div
         className="pointer-events-none absolute inset-0"
         style={{
@@ -678,9 +688,12 @@ export default function Canvas() {
           // as "edge falloff" on a 1440px-wide screen but "darkens the
           // center" on a 390px one) — scale with the viewport instead so
           // the clear center stays proportionally consistent everywhere.
-          boxShadow: 'inset 0 0 clamp(120px, 34vmin, 320px) clamp(28px, 9vmin, 90px) rgba(0,0,0,0.95)',
+          // Eased back from near-opaque now that there's an actual starfield
+          // behind the grid — the vignette still focuses the centre, but the
+          // stars stay legible at the edges instead of being crushed out.
+          boxShadow: 'inset 0 0 clamp(120px, 34vmin, 320px) clamp(28px, 9vmin, 90px) rgba(0,0,0,0.82)',
           background:
-            'radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,0.8) 100%)',
+            'radial-gradient(ellipse at center, transparent 38%, rgba(0,0,0,0.66) 100%)',
         }}
       />
 

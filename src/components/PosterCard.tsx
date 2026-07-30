@@ -37,10 +37,10 @@ function PosterCard({ id, left, top, width, height, posterUrl, title, highlighte
     <div
       data-card-id={id}
       style={{ position: 'absolute', left, top, width, height }}
-      className={`group flex cursor-pointer items-center justify-center overflow-hidden rounded-xl bg-[#16161b] shadow-[0_8px_30px_rgba(0,0,0,0.35)] transition-transform duration-200 ease-out hover:z-10 hover:scale-[1.05] hover:will-change-transform ${
+      className={`poster-card group flex cursor-pointer items-center justify-center overflow-hidden rounded-xl bg-[#0b0b0b] shadow-[0_8px_30px_rgba(0,0,0,0.5)] hover:z-10 hover:scale-[1.06] hover:shadow-[0_18px_50px_rgba(0,0,0,0.65),0_0_30px_-6px_rgba(255,255,255,0.3)] ${
         highlighted
           ? 'poster-highlight z-20 scale-[1.12] ring-2 ring-white'
-          : 'ring-1 ring-white/6'
+          : 'ring-1 ring-white/8 hover:ring-white/25'
       }`}
     >
       {posterUrl && (
@@ -52,7 +52,7 @@ function PosterCard({ id, left, top, width, height, posterUrl, title, highlighte
           decoding="async"
           fetchPriority={visible ? 'high' : 'low'}
           onLoad={() => setLoaded(true)}
-          className={`h-full w-full object-cover transition-opacity duration-300 ease-out ${
+          className={`poster-card-img h-full w-full object-cover group-hover:scale-[1.04] ${
             loaded ? 'opacity-100' : 'opacity-0'
           }`}
         />
