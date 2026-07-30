@@ -139,7 +139,22 @@ body,
 .poster-card {
   transition:
     scale 340ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 340ms cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow 340ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    translate 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Entrance state for the one-time initial "domino" reveal (see Canvas.tsx) —
+   this class is removed the instant a card's ring is reached, after which
+   the transition rule above hands smoothly back to ordinary hover behaviour.
+   `scale`/`translate` are independent CSS properties from `transform`, so
+   this can't collide with the hover scale the way an old `transform`-based
+   entrance animation once did. */
+.poster-card-hidden {
+  opacity: 0;
+  scale: 0.82;
+  translate: 0 12px;
+  pointer-events: none;
 }
 
 .poster-card-img {
@@ -194,6 +209,16 @@ body,
 
   .poster-card::after {
     display: none;
+  }
+
+  /* Belt-and-suspenders: Canvas.tsx already skips the reveal wave outright
+     for reduced motion, so this class should never actually be applied in
+     that case — but if it somehow is, don't leave anything permanently
+     invisible. */
+  .poster-card-hidden {
+    opacity: 1;
+    scale: 1;
+    translate: 0;
   }
 }
 

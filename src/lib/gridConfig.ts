@@ -10,8 +10,15 @@ export const GAP = 18
 // only ever mounts the cards that intersect the current viewport (see the
 // colStart/colEnd/rowStart/rowEnd math there), so this scales to millions
 // without a performance hit.
-export const COLUMNS = 2000
-export const ROWS = 2000
+// Deliberately odd, not 2000/2000. An even column/row count puts the exact
+// numeric center of the world precisely on the BOUNDARY between two cards —
+// there's a structural tie, and no card can ever be exactly centered (the
+// closest either one can get is half a cell off, ~99/144px, provably at
+// every viewport size). An odd count makes the middle column/row land
+// exactly on a real card instead of between two, which is what lets
+// Canvas.tsx's initial "domino" reveal start truly dead-center.
+export const COLUMNS = 2001
+export const ROWS = 2001
 export const TOTAL_CARDS = COLUMNS * ROWS
 
 export const CELL_WIDTH = CARD_WIDTH + GAP

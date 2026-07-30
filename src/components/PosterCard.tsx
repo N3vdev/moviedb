@@ -10,9 +10,11 @@ interface PosterCardProps {
   title?: string
   highlighted?: boolean
   visible?: boolean
+  /** False only during the one-time initial "domino" reveal — see Canvas.tsx. */
+  revealed?: boolean
 }
 
-function PosterCard({ id, left, top, width, height, posterUrl, title, highlighted, visible }: PosterCardProps) {
+function PosterCard({ id, left, top, width, height, posterUrl, title, highlighted, visible, revealed = true }: PosterCardProps) {
   const [loaded, setLoaded] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
 
@@ -38,6 +40,8 @@ function PosterCard({ id, left, top, width, height, posterUrl, title, highlighte
       data-card-id={id}
       style={{ position: 'absolute', left, top, width, height }}
       className={`poster-card group flex cursor-pointer items-center justify-center overflow-hidden rounded-xl bg-[#0b0b0b] shadow-[0_8px_30px_rgba(0,0,0,0.5)] hover:z-10 hover:scale-[1.06] hover:shadow-[0_18px_50px_rgba(0,0,0,0.65),0_0_30px_-6px_rgba(255,255,255,0.3)] ${
+        revealed ? '' : 'poster-card-hidden'
+      } ${
         highlighted
           ? 'poster-highlight z-20 scale-[1.12] ring-2 ring-white'
           : 'ring-1 ring-white/8 hover:ring-white/25'

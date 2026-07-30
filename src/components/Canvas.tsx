@@ -13,6 +13,7 @@ import AboutModal from './AboutModal'
 import { getSpecialCardPosition, type SpecialCard } from '../lib/specialCards'
 import { usePosterFeed, DEFAULT_FILTERS, type FeedFilters } from '../hooks/usePosterFeed'
 import { posterUrl, type TmdbItem } from '../lib/tmdb'
+import { INTRO_DURATION_MS } from './IntroReveal'
 import {
   CARD_WIDTH,
   CARD_HEIGHT,
@@ -30,6 +31,14 @@ const FOCUS_SCALE = 1.15
 const FOCUS_HIGHLIGHT_MS = 2600
 const FOCUS_PAN_DURATION_MS = 1200
 const TAP_MOVE_THRESHOLD = 6
+// Wheel-zoom momentum tuning (see zoomVelocityRef/stepZoomMomentum) — each
+// wheel event's deltaY is scaled into a log-scale velocity contribution,
+// then decayed by this ratio every animation frame. With decay 0.78, a
+// single event's total eventual effect is contribution * 1/(1-0.78) ≈
+// contribution * 4.5, spread smoothly over roughly 10-15 frames rather than
+// applied instantly.
+const WHEEL_ZOOM_SENSITIVITY = 0.00033
+const WHEEL_ZOOM_DECAY = 0.78
 // Matches Tailwind's `sm` breakpoint, used elsewhere for the same mobile/
 // desktop split (e.g. Header's logo visibility).
 const MOBILE_BREAKPOINT = 640
@@ -55,6 +64,36 @@ const midpoint = (a: Point, b: Point) => ({
   x: (a.x + b.x) / 2,
   y: (a.y + b.y) / 2,
 })
+
+// Which grid cells a given transform+viewport covers — shared by the card
+// virtualization memo and the intro reveal wave below, so the two can never
+// disagree about what's actually on screen.
+function computeVisibleBounds(t: Transform, size: { width: number; height: number }) {
+  const viewLeft = -t.x / t.scale
+  const viewTop = -t.y / t.scale
+  const viewRight = viewLeft + size.width / t.scale
+  const viewBottom = viewTop + size.height / t.scale
+
+  const strictColStart = clamp(Math.floor(viewLeft / CELL_WIDTH), 0, COLUMNS - 1)
+  const strictColEnd = clamp(Math.ceil(viewRight / CELL_WIDTH), 0, COLUMNS - 1)
+  const strictRowStart = clamp(Math.floor(viewTop / CELL_HEIGHT), 0, ROWS - 1)
+  const strictRowEnd = clamp(Math.ceil(viewBottom / CELL_HEIGHT), 0, ROWS - 1)
+
+  return {
+    strictColStart,
+    strictColEnd,
+    strictRowStart,
+    strictRowEnd,
+    colStart: clamp(strictColStart - BUFFER_CELLS, 0, COLUMNS - 1),
+    colEnd: clamp(strictColEnd + BUFFER_CELLS, 0, COLUMNS - 1),
+    rowStart: clamp(strictRowStart - BUFFER_CELLS, 0, ROWS - 1),
+    rowEnd: clamp(strictRowEnd + BUFFER_CELLS, 0, ROWS - 1),
+  }
+}
+
+// How long each successive ring takes to pop in during the initial "domino"
+// reveal (see the centering effect and the cards memo below).
+const INTRO_REVEAL_RING_MS = 220
 
 export default function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -82,9 +121,35 @@ export default function Canvas() {
   const lastMoveTime = useRef(0)
   const rafId = useRef<number | null>(null)
   const wheelIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Wheel-driven zoom momentum: each wheel event nudges this log-scale
+  // velocity rather than applying the zoom directly, and a per-frame rAF
+  // loop (stepZoomMomentum) smooths it out — the same technique as pan
+  // inertia above, and for the same reason: a standard mouse wheel only
+  // fires a handful of large, sparse events, so applying them directly (even
+  // with a CSS transition) either snaps between notches or, if retriggered
+  // faster than the transition finishes, produces a laggy "chasing" feel.
+  // Driving it from our own 60fps loop with transition:none — exactly like
+  // drag/pan already does — sidesteps both problems.
+  const zoomVelocityRef = useRef(0)
+  const zoomAnchorRef = useRef<Point>({ x: 0, y: 0 })
+  const zoomRafId = useRef<number | null>(null)
   const hasCentered = useRef(false)
   const pressedDirectionsRef = useRef(new Set<'up' | 'down' | 'left' | 'right'>())
   const keyPanRafId = useRef<number | null>(null)
+
+  // One-time "domino" reveal on first load: cards pop in ring by ring from
+  // the center cell outward (Chebyshev distance, so it grows evenly in all 8
+  // directions at once) instead of the whole grid appearing at once. Radius
+  // -1 means nothing has been revealed yet — while introRevealCenterRef is
+  // still null (before the wave actually starts, see the centering effect
+  // below) the cards memo treats every card as unrevealed regardless of
+  // radius, so this never flashes the full grid early.
+  const [introRevealRadius, setIntroRevealRadius] = useState(-1)
+  const [introRevealDone, setIntroRevealDone] = useState(false)
+  const introRevealCenterRef = useRef<{ col: number; row: number } | null>(null)
+  const introRevealDoneRef = useRef(false)
+  const introRevealStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const introRevealTickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [filters, setFilters] = useState<FeedFilters>(DEFAULT_FILTERS)
   const [filterPanelOpen, setFilterPanelOpen] = useState(false)
@@ -164,6 +229,33 @@ export default function Canvas() {
     backdropRef.current?.setTransition('none')
   }, [])
 
+  // Jumps straight to "every mounted card revealed" and stops the ring timer.
+  // Called both when the wave finishes its own count-up and defensively the
+  // instant the user actually interacts (drag/wheel) — nobody should ever be
+  // stuck waiting on a reveal wave for cards they're actively trying to pan
+  // toward, and once real interaction has started this effect has done its
+  // one job regardless of where the count-up had gotten to.
+  const completeIntroReveal = useCallback(() => {
+    if (introRevealDoneRef.current) return
+    introRevealDoneRef.current = true
+    if (introRevealStartTimerRef.current) {
+      clearTimeout(introRevealStartTimerRef.current)
+      introRevealStartTimerRef.current = null
+    }
+    if (introRevealTickTimerRef.current) {
+      clearTimeout(introRevealTickTimerRef.current)
+      introRevealTickTimerRef.current = null
+    }
+    setIntroRevealDone(true)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (introRevealStartTimerRef.current) clearTimeout(introRevealStartTimerRef.current)
+      if (introRevealTickTimerRef.current) clearTimeout(introRevealTickTimerRef.current)
+    }
+  }, [])
+
   // Track viewport size so the world can be centered and cards can be
   // virtualized against the visible bounds.
   useEffect(() => {
@@ -182,26 +274,81 @@ export default function Canvas() {
     return () => observer.disconnect()
   }, [])
 
-  // Center the world in the viewport once we know its size.
+  // Center the world in the viewport once we know its size, then schedule
+  // the one-time "domino" reveal against that exact same transform.
   useEffect(() => {
     if (hasCentered.current || size.width === 0 || size.height === 0) return
     hasCentered.current = true
     const scale = defaultScaleFor(size.width)
-    applyTransform(
-      {
-        x: (size.width - WORLD_WIDTH * scale) / 2,
-        y: (size.height - WORLD_HEIGHT * scale) / 2,
-        scale,
-      },
-      true,
+    const centered: Transform = {
+      x: (size.width - WORLD_WIDTH * scale) / 2,
+      y: (size.height - WORLD_HEIGHT * scale) / 2,
+      scale,
+    }
+    applyTransform(centered, true)
+
+    // Reduced-motion: skip the wave outright rather than instantly-complete
+    // it after computing a center nobody needed — every card just renders
+    // normally (see the cards memo's introRevealCenterRef.current check).
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      completeIntroReveal()
+      return
+    }
+
+    const bounds = computeVisibleBounds(centered, size)
+    // The cell whose CARD (not cell, which also includes the gap) is
+    // closest to the viewport's true center pixel — NOT the midpoint of the
+    // strict col/row bounds (that's the middle of an index range, which
+    // rarely matches where any actual card sits) and NOT just "whichever
+    // cell's bounding box contains the center point" (a card only occupies
+    // the CARD_WIDTH/CARD_HEIGHT portion of its cell, so that could still
+    // land up to half a cell short of the true center). Solving
+    // col*CELL_WIDTH + CARD_WIDTH/2 = centerWorldX for the nearest integer
+    // col picks whichever card's own center is nearest, which is the best
+    // any fixed grid can do.
+    const centerWorldX = (size.width / 2 - centered.x) / centered.scale
+    const centerWorldY = (size.height / 2 - centered.y) / centered.scale
+    const centerCol = clamp(Math.round((centerWorldX - CARD_WIDTH / 2) / CELL_WIDTH), 0, COLUMNS - 1)
+    const centerRow = clamp(Math.round((centerWorldY - CARD_HEIGHT / 2) / CELL_HEIGHT), 0, ROWS - 1)
+    const maxRadius = Math.max(
+      centerCol - bounds.colStart,
+      bounds.colEnd - centerCol,
+      centerRow - bounds.rowStart,
+      bounds.rowEnd - centerRow,
     )
-  }, [size, applyTransform])
+
+    // Delayed to start exactly when the intro overlay finishes — otherwise
+    // the whole wave plays out invisibly underneath it and is wasted.
+    introRevealStartTimerRef.current = setTimeout(() => {
+      introRevealCenterRef.current = { col: centerCol, row: centerRow }
+      let radius = 0
+      setIntroRevealRadius(0)
+      const tick = () => {
+        radius += 1
+        if (radius > maxRadius) {
+          completeIntroReveal()
+          return
+        }
+        setIntroRevealRadius(radius)
+        introRevealTickTimerRef.current = setTimeout(tick, INTRO_REVEAL_RING_MS)
+      }
+      introRevealTickTimerRef.current = setTimeout(tick, INTRO_REVEAL_RING_MS)
+    }, INTRO_DURATION_MS)
+  }, [size, applyTransform, completeIntroReveal])
 
   const cancelInertia = useCallback(() => {
     if (rafId.current !== null) {
       cancelAnimationFrame(rafId.current)
       rafId.current = null
     }
+    // Any other gesture starting (drag, pinch, focus-jump, reset, a button
+    // zoom) should always immediately supersede a still-coasting wheel-zoom,
+    // the same way it already supersedes pan inertia.
+    if (zoomRafId.current !== null) {
+      cancelAnimationFrame(zoomRafId.current)
+      zoomRafId.current = null
+    }
+    zoomVelocityRef.current = 0
   }, [])
 
   const startInertia = useCallback(() => {
@@ -232,6 +379,23 @@ export default function Canvas() {
     })
   }, [applyTransform])
 
+  // Per-frame smoothing for wheel-zoom (see zoomVelocityRef above) — applies
+  // a shrinking slice of the accumulated velocity every frame, anchored to
+  // wherever the cursor most recently was, until it decays to nothing.
+  // transition stays 'none' throughout: the smoothing comes from running at
+  // 60fps ourselves, not from the browser easing between sparse targets.
+  const stepZoomMomentum = useCallback(() => {
+    const v = zoomVelocityRef.current
+    if (Math.abs(v) < 0.0004) {
+      zoomVelocityRef.current = 0
+      zoomRafId.current = null
+      return
+    }
+    zoomAt(zoomAnchorRef.current.x, zoomAnchorRef.current.y, Math.exp(v))
+    zoomVelocityRef.current *= WHEEL_ZOOM_DECAY
+    zoomRafId.current = requestAnimationFrame(stepZoomMomentum)
+  }, [zoomAt])
+
   // Same math as zoomAt, but takes an absolute target scale rather than a
   // multiplicative factor — used by the +/- buttons so each press lands
   // exactly on a clean 10% step instead of compounding a ratio.
@@ -250,6 +414,7 @@ export default function Canvas() {
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     ;(e.target as Element).setPointerCapture(e.pointerId)
     cancelInertia()
+    completeIntroReveal()
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     setInteracting(true)
 
@@ -263,7 +428,7 @@ export default function Canvas() {
       const pts = Array.from(pointers.current.values())
       pinch.current = { lastDist: distance(pts[0], pts[1]), lastMid: midpoint(pts[0], pts[1]) }
     }
-  }, [cancelInertia, setInteracting])
+  }, [cancelInertia, setInteracting, completeIntroReveal])
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!pointers.current.has(e.pointerId)) return
@@ -340,19 +505,47 @@ export default function Canvas() {
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault()
-      cancelInertia()
+      completeIntroReveal()
       const rect = el.getBoundingClientRect()
-      const factor = Math.exp(-e.deltaY * 0.0015)
-      zoomAt(e.clientX - rect.left, e.clientY - rect.top, factor)
+      zoomAnchorRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
 
-      setInteracting(true)
+      // Continuous log-scale factor, deliberately never snapped to a 10%
+      // step — that stepping is a buttons-only affordance (see zoomButton)
+      // so the +/- controls land on clean, predictable numbers. Scroll
+      // should never do that; it's the free-form, exact-under-the-cursor
+      // path.
+      //
+      // This ADDS to the velocity rather than zooming directly — applying
+      // each wheel event's delta straight away (even under a CSS transition)
+      // either snaps between a standard mouse's sparse, coarse notches, or,
+      // if events fire faster than the transition finishes, produces a
+      // laggy "chasing" feel since the transition keeps getting interrupted
+      // and restarted from wherever it currently is. Accumulating velocity
+      // and letting stepZoomMomentum apply+decay it every frame gives 60fps
+      // smoothing regardless of how sparse or dense the input events are —
+      // the exact same technique pan inertia already uses above.
+      zoomVelocityRef.current += -e.deltaY * WHEEL_ZOOM_SENSITIVITY
+      // Stop a pan-fling in its tracks (inlined rather than calling
+      // cancelInertia() — that also zeroes zoomVelocityRef, which would
+      // wipe out the delta this same event just added above).
+      if (rafId.current !== null) {
+        cancelAnimationFrame(rafId.current)
+        rafId.current = null
+      }
+      if (zoomRafId.current === null) {
+        setIsInteracting(true)
+        if (worldRef.current) worldRef.current.style.transition = 'none'
+        backdropRef.current?.setTransition('none')
+        zoomRafId.current = requestAnimationFrame(stepZoomMomentum)
+      }
+
       if (wheelIdleTimer.current) clearTimeout(wheelIdleTimer.current)
       wheelIdleTimer.current = setTimeout(() => setInteracting(false), 150)
     }
 
     el.addEventListener('wheel', handleWheel, { passive: false })
     return () => el.removeEventListener('wheel', handleWheel)
-  }, [zoomAt, cancelInertia, setInteracting])
+  }, [stepZoomMomentum, setInteracting, completeIntroReveal])
 
   // Arrow-key panning (holding several at once pans diagonally — e.g.
   // Up+Left for top-left) plus a "just start typing" shortcut that opens
@@ -411,6 +604,7 @@ export default function Canvas() {
           pressedDirectionsRef.current.add(direction)
           if (keyPanRafId.current === null) {
             cancelInertia()
+            completeIntroReveal()
             setInteracting(true)
             keyPanRafId.current = requestAnimationFrame(stepKeyPan)
           }
@@ -448,7 +642,7 @@ export default function Canvas() {
       document.removeEventListener('keyup', handleKeyUp)
       if (keyPanRafId.current !== null) cancelAnimationFrame(keyPanRafId.current)
     }
-  }, [applyTransform, cancelInertia, setInteracting, searchOpen, selectedMovie, openSpecialCard, aboutOpen])
+  }, [applyTransform, cancelInertia, setInteracting, searchOpen, selectedMovie, openSpecialCard, aboutOpen, completeIntroReveal])
 
   // Steps to the next/previous clean multiple of 10% from wherever the
   // scale currently sits (which may be off-grid from a pinch/wheel gesture)
@@ -549,32 +743,28 @@ export default function Canvas() {
   // Virtualization: only render the cards whose cells intersect the
   // current viewport, so the world can scale to millions of posters.
   const cards = useMemo(() => {
-    const list: { id: number; left: number; top: number; visible: boolean }[] = []
+    const list: { id: number; left: number; top: number; visible: boolean; revealed: boolean }[] = []
     // Skip until the world has actually been centered — otherwise this
     // would momentarily compute cells for the pre-center transform (0,0,1)
     // and burn early poster-feed requests (including the #1 trending slot)
     // on cells nobody will ever see.
     if (size.width === 0 || renderTransform.scale <= 0 || !hasCentered.current) return list
 
-    const viewLeft = -renderTransform.x / renderTransform.scale
-    const viewTop = -renderTransform.y / renderTransform.scale
-    const viewRight = viewLeft + size.width / renderTransform.scale
-    const viewBottom = viewTop + size.height / renderTransform.scale
+    const bounds = computeVisibleBounds(renderTransform, size)
+    const { strictColStart, strictColEnd, strictRowStart, strictRowEnd, colStart, colEnd, rowStart, rowEnd } = bounds
 
-    // Strictly-on-screen bounds (no buffer) — used to prioritize which
-    // cells get poster images first when the fetch pool is scarce.
-    const strictColStart = clamp(Math.floor(viewLeft / CELL_WIDTH), 0, COLUMNS - 1)
-    const strictColEnd = clamp(Math.ceil(viewRight / CELL_WIDTH), 0, COLUMNS - 1)
-    const strictRowStart = clamp(Math.floor(viewTop / CELL_HEIGHT), 0, ROWS - 1)
-    const strictRowEnd = clamp(Math.ceil(viewBottom / CELL_HEIGHT), 0, ROWS - 1)
-
-    const colStart = clamp(strictColStart - BUFFER_CELLS, 0, COLUMNS - 1)
-    const colEnd = clamp(strictColEnd + BUFFER_CELLS, 0, COLUMNS - 1)
-    const rowStart = clamp(strictRowStart - BUFFER_CELLS, 0, ROWS - 1)
-    const rowEnd = clamp(strictRowEnd + BUFFER_CELLS, 0, ROWS - 1)
+    // Drives the initial "domino" reveal (see the centering effect above):
+    // while introRevealCenterRef is still null the wave hasn't started yet
+    // (e.g. the intro overlay is still covering the canvas), so every card
+    // stays unrevealed rather than racing ahead of it.
+    const introCenter = introRevealCenterRef.current
 
     for (let row = rowStart; row <= rowEnd; row++) {
       for (let col = colStart; col <= colEnd; col++) {
+        const revealed =
+          introRevealDone ||
+          (introCenter !== null &&
+            Math.max(Math.abs(col - introCenter.col), Math.abs(row - introCenter.row)) <= introRevealRadius)
         list.push({
           id: row * COLUMNS + col,
           left: col * CELL_WIDTH,
@@ -582,11 +772,20 @@ export default function Canvas() {
           visible:
             row >= strictRowStart && row <= strictRowEnd &&
             col >= strictColStart && col <= strictColEnd,
+          revealed,
         })
       }
     }
     return list
-  }, [size.width, size.height, renderTransform.x, renderTransform.y, renderTransform.scale])
+  }, [
+    size.width,
+    size.height,
+    renderTransform.x,
+    renderTransform.y,
+    renderTransform.scale,
+    introRevealRadius,
+    introRevealDone,
+  ])
 
   // Request poster images for whichever cells are currently in view (plus
   // buffer) — the feed hook fetches only as much as needed to fill them.
@@ -653,6 +852,7 @@ export default function Canvas() {
               title={assignment?.title}
               highlighted={card.id === focusedCellId}
               visible={card.visible}
+              revealed={card.revealed}
             />
           )
         })}
