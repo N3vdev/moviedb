@@ -4,6 +4,10 @@ import { searchSpecialCards, type SpecialCard } from '../lib/specialCards'
 
 interface SearchBarProps {
   open: boolean
+  // Bumped by the "just start typing" shortcut in Canvas — seeds the query
+  // with whatever character opened this, and re-fires even if the same
+  // character is typed twice in a row since it's keyed by id, not by char.
+  seed?: { char: string; id: number } | null
   onClose: () => void
   onSelect: (item: TmdbItem) => void
   onSelectSpecial: (card: SpecialCard) => void
@@ -32,7 +36,7 @@ function applyAdvancedFilters(items: TmdbItem[], adv: AdvancedFilters): TmdbItem
   })
 }
 
-export default function SearchBar({ open, onClose, onSelect, onSelectSpecial }: SearchBarProps) {
+export default function SearchBar({ open, seed, onClose, onSelect, onSelectSpecial }: SearchBarProps) {
   const [query, setQuery] = useState('')
   const [rawResults, setRawResults] = useState<TmdbItem[]>([])
   const [resultsOpen, setResultsOpen] = useState(false)
@@ -54,8 +58,29 @@ export default function SearchBar({ open, onClose, onSelect, onSelectSpecial }: 
       setRawResults([])
       setResultsOpen(false)
       setAdvancedOpen(false)
+      // Otherwise the (now invisible, pointer-events-none) input stays the
+      // document's activeElement indefinitely — which would silently block
+      // anything elsewhere that checks "is a form field focused" (e.g. the
+      // canvas's arrow-key panning) until the user happens to click
+      // something else.
+      inputRef.current?.blur()
     }
   }, [open])
+
+  // "Just start typing" — Canvas opens this panel and hands over the
+  // character that was typed instead of requiring a click first. Keyed on
+  // `seed.id` (not the character) so typing the same letter twice in a row
+  // still re-seeds correctly.
+  useEffect(() => {
+    if (!seed) return
+    setQuery(seed.char)
+    const len = seed.char.length
+    requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.setSelectionRange(len, len)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed?.id])
 
   useEffect(() => {
     const trimmed = query.trim()
@@ -150,8 +175,8 @@ export default function SearchBar({ open, onClose, onSelect, onSelectSpecial }: 
       aria-hidden={!open}
     >
       <div className="relative">
-        <div className="glass-panel flex items-center gap-1 rounded-2xl px-2 py-2 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
-          <svg viewBox="0 0 24 24" className="ml-2 h-4 w-4 shrink-0 text-white/40" fill="none" stroke="currentColor" strokeWidth="2">
+        <div className="glass-panel flex items-center gap-2 rounded-full px-3 py-2.5 shadow-[0_10px_40px_rgba(0,0,0,0.5)] ring-1 ring-transparent transition-shadow duration-200 focus-within:ring-white/25">
+          <svg viewBox="0 0 24 24" className="ml-1.5 h-5 w-5 shrink-0 text-white/45" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="7" />
             <path d="m21 21-4.3-4.3" />
           </svg>
@@ -161,14 +186,19 @@ export default function SearchBar({ open, onClose, onSelect, onSelectSpecial }: 
             onChange={(e) => setQuery(e.target.value)}
             onFocus={() => (rawResults.length > 0 || query.trim()) && setResultsOpen(true)}
             placeholder="Search any movie or series…"
-            className="min-w-0 flex-1 bg-transparent px-1 py-1.5 text-sm text-white placeholder:text-white/35 focus:outline-none"
+            className="min-w-0 flex-1 bg-transparent px-1 py-1 text-base text-white placeholder:text-white/35 focus:outline-none"
           />
+          {!query && (
+            <kbd className="hidden shrink-0 select-none rounded-md border border-white/15 bg-white/5 px-1.5 py-0.5 font-sans text-[11px] text-white/40 sm:block">
+              Esc
+            </kbd>
+          )}
           <button
             type="button"
             onClick={() => setAdvancedOpen((v) => !v)}
             aria-label="Advanced filters"
             aria-pressed={advancedOpen}
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
               advancedOpen || hasActiveAdvanced
                 ? 'bg-white/15 text-white'
                 : 'text-white/50 hover:bg-white/10 hover:text-white'

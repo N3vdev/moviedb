@@ -81,10 +81,18 @@ export default function Canvas() {
   const rafId = useRef<number | null>(null)
   const wheelIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hasCentered = useRef(false)
+  const pressedDirectionsRef = useRef(new Set<'up' | 'down' | 'left' | 'right'>())
+  const keyPanRafId = useRef<number | null>(null)
 
   const [filters, setFilters] = useState<FeedFilters>(DEFAULT_FILTERS)
   const [filterPanelOpen, setFilterPanelOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  // Bumps every time a keystroke opens search "for" the user (see the
+  // type-to-search effect below) — SearchBar seeds its query from this and
+  // uses the id (not just the char) as its effect dependency, so typing the
+  // same letter twice in a row still re-triggers correctly.
+  const [searchSeed, setSearchSeed] = useState<{ char: string; id: number } | null>(null)
+  const searchSeedCounter = useRef(0)
   const [focusedCellId, setFocusedCellId] = useState<number | null>(null)
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [selectedMovie, setSelectedMovie] = useState<SelectedMovie | null>(null)
@@ -335,6 +343,102 @@ export default function Canvas() {
     return () => el.removeEventListener('wheel', handleWheel)
   }, [zoomAt, cancelInertia, setInteracting])
 
+  // Arrow-key panning (holding several at once pans diagonally — e.g.
+  // Up+Left for top-left) plus a "just start typing" shortcut that opens
+  // search and seeds it with whatever was typed. Both skip while an actual
+  // form field has focus (the search input, filter number fields) or a
+  // modal is open, so normal typing/text-cursor movement is never hijacked.
+  useEffect(() => {
+    const ARROW_KEYS: Record<string, 'up' | 'down' | 'left' | 'right'> = {
+      ArrowUp: 'up',
+      ArrowDown: 'down',
+      ArrowLeft: 'left',
+      ArrowRight: 'right',
+    }
+    const PAN_SPEED = 14 // screen px/frame; diagonals are normalized below
+
+    const stepKeyPan = () => {
+      const dirs = pressedDirectionsRef.current
+      if (dirs.size === 0) {
+        keyPanRafId.current = null
+        setInteracting(false)
+        return
+      }
+      let dx = 0
+      let dy = 0
+      if (dirs.has('left')) dx += PAN_SPEED
+      if (dirs.has('right')) dx -= PAN_SPEED
+      if (dirs.has('up')) dy += PAN_SPEED
+      if (dirs.has('down')) dy -= PAN_SPEED
+      if (dx !== 0 && dy !== 0) {
+        dx *= Math.SQRT1_2
+        dy *= Math.SQRT1_2
+      }
+      const t = transformRef.current
+      applyTransform({ ...t, x: t.x + dx, y: t.y + dy })
+      keyPanRafId.current = requestAnimationFrame(stepKeyPan)
+    }
+
+    const isFormField = () => {
+      const active = document.activeElement as HTMLElement | null
+      if (!active) return false
+      return (
+        active.tagName === 'INPUT' ||
+        active.tagName === 'TEXTAREA' ||
+        active.tagName === 'SELECT' ||
+        active.isContentEditable
+      )
+    }
+    const isModalBlocking = () => Boolean(selectedMovie || openSpecialCard || aboutOpen)
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const direction = ARROW_KEYS[e.key]
+      if (direction) {
+        if (e.ctrlKey || e.metaKey || e.altKey || isFormField() || isModalBlocking()) return
+        e.preventDefault()
+        if (!pressedDirectionsRef.current.has(direction)) {
+          pressedDirectionsRef.current.add(direction)
+          if (keyPanRafId.current === null) {
+            cancelInertia()
+            setInteracting(true)
+            keyPanRafId.current = requestAnimationFrame(stepKeyPan)
+          }
+        }
+        return
+      }
+
+      // "Just start typing" — open search and seed it with the character
+      // rather than requiring a click on the search icon first.
+      if (
+        !searchOpen &&
+        !isFormField() &&
+        !isModalBlocking() &&
+        e.key.length === 1 &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey
+      ) {
+        e.preventDefault()
+        searchSeedCounter.current += 1
+        setSearchSeed({ char: e.key, id: searchSeedCounter.current })
+        setSearchOpen(true)
+      }
+    }
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      const direction = ARROW_KEYS[e.key]
+      if (direction) pressedDirectionsRef.current.delete(direction)
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    document.addEventListener('keyup', handleKeyUp)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('keyup', handleKeyUp)
+      if (keyPanRafId.current !== null) cancelAnimationFrame(keyPanRafId.current)
+    }
+  }, [applyTransform, cancelInertia, setInteracting, searchOpen, selectedMovie, openSpecialCard, aboutOpen])
+
   // Steps to the next/previous clean multiple of 10% from wherever the
   // scale currently sits (which may be off-grid from a pinch/wheel gesture)
   // — rounding down then adding 10 (or up then subtracting 10) guarantees
@@ -540,6 +644,7 @@ export default function Canvas() {
               posterUrl={assignment ? posterUrl(assignment.posterPath) : undefined}
               title={assignment?.title}
               highlighted={card.id === focusedCellId}
+              visible={card.visible}
             />
           )
         })}
@@ -590,6 +695,7 @@ export default function Canvas() {
       <GlassRipple trigger={rippleTrigger} />
       <SearchBar
         open={searchOpen}
+        seed={searchSeed}
         onClose={() => setSearchOpen(false)}
         onSelect={(item) => {
           handleSelectMovie(item)

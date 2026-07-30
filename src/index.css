@@ -44,14 +44,6 @@ body,
   animation: pulse-glow 1.3s ease-out 2;
 }
 
-/* Lets the intro reveal's radial-gradient mask radius be a real animatable
-   value instead of a plain string swap. */
-@property --reveal-radius {
-  syntax: '<percentage>';
-  inherits: false;
-  initial-value: 0%;
-}
-
 /* Shared frosted-glass surface for the nav bar, search, filter panel and
    zoom controls — a real backdrop blur + saturation boost rather than a
    near-opaque solid fill, so the canvas visibly shows through. */

@@ -61,7 +61,7 @@ export default function AboutModal({ open, onClose }: AboutModalProps) {
           </div>
 
           <h2 className="text-lg font-extrabold tracking-tight text-white">
-            Nev<span className="font-medium text-white/55">Atlas</span>
+            Nev<span className="font-medium text-white/55">flix</span>
           </h2>
 
           <p className="text-sm leading-relaxed text-white/60">

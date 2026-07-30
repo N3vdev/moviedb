@@ -9,9 +9,10 @@ interface PosterCardProps {
   posterUrl?: string
   title?: string
   highlighted?: boolean
+  visible?: boolean
 }
 
-function PosterCard({ id, left, top, width, height, posterUrl, title, highlighted }: PosterCardProps) {
+function PosterCard({ id, left, top, width, height, posterUrl, title, highlighted, visible }: PosterCardProps) {
   const [loaded, setLoaded] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
 
@@ -36,7 +37,7 @@ function PosterCard({ id, left, top, width, height, posterUrl, title, highlighte
     <div
       data-card-id={id}
       style={{ position: 'absolute', left, top, width, height }}
-      className={`group will-change-transform flex cursor-pointer items-center justify-center overflow-hidden rounded-xl bg-[#16161b] shadow-[0_8px_30px_rgba(0,0,0,0.35)] transition-transform duration-200 ease-out hover:z-10 hover:scale-[1.05] ${
+      className={`group flex cursor-pointer items-center justify-center overflow-hidden rounded-xl bg-[#16161b] shadow-[0_8px_30px_rgba(0,0,0,0.35)] transition-transform duration-200 ease-out hover:z-10 hover:scale-[1.05] hover:will-change-transform ${
         highlighted
           ? 'poster-highlight z-20 scale-[1.12] ring-2 ring-white'
           : 'ring-1 ring-white/6'
@@ -49,6 +50,7 @@ function PosterCard({ id, left, top, width, height, posterUrl, title, highlighte
           alt={title ?? ''}
           loading="lazy"
           decoding="async"
+          fetchPriority={visible ? 'high' : 'low'}
           onLoad={() => setLoaded(true)}
           className={`h-full w-full object-cover transition-opacity duration-300 ease-out ${
             loaded ? 'opacity-100' : 'opacity-0'

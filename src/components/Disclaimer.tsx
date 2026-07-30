@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
+import { INTRO_DURATION_MS } from './IntroReveal'
 
-const STORAGE_KEY = 'nevatlas-disclaimer-accepted'
+const STORAGE_KEY = 'nevflix-disclaimer-accepted'
 
 // Shown once per browser (localStorage-gated) — a personal-project notice,
 // not a cookie-consent-style nag, so it never reappears once accepted and
@@ -9,14 +10,18 @@ export default function Disclaimer() {
   const [open, setOpen] = useState(false)
 
   useEffect(() => {
+    let shouldShow: boolean
     try {
-      if (localStorage.getItem(STORAGE_KEY) !== 'true') {
-        setOpen(true)
-      }
+      shouldShow = localStorage.getItem(STORAGE_KEY) !== 'true'
     } catch {
       // localStorage unavailable (private browsing, etc.) — fail open
-      setOpen(true)
+      shouldShow = true
     }
+    if (!shouldShow) return
+    // Wait for the intro reveal to actually finish — otherwise this pops in
+    // on top of (and undercuts) that whole sequence instead of after it.
+    const timer = setTimeout(() => setOpen(true), INTRO_DURATION_MS)
+    return () => clearTimeout(timer)
   }, [])
 
   const accept = () => {
@@ -50,7 +55,7 @@ export default function Disclaimer() {
           </div>
 
           <h2 className="text-lg font-extrabold tracking-tight text-white">
-            Welcome to Nev<span className="font-medium text-white/55">Atlas</span>
+            Welcome to Nev<span className="font-medium text-white/55">flix</span>
           </h2>
 
           <p className="text-sm leading-relaxed text-white/60">

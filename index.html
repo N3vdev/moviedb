@@ -3,8 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/x-icon" href="/fmhy.ico" />
+    <!-- Lets the browser start DNS/TLS handshakes for TMDB's API and image
+         CDN while the page is still parsing, instead of waiting until the
+         JS bundle loads and executes its first fetch/img request.
+         crossorigin matches how each is actually requested: the API is
+         fetched with an Authorization header (always CORS mode), poster
+         <img> tags have no crossorigin attribute (plain, non-CORS mode) —
+         mismatching this would preconnect a socket that can't be reused. -->
+    <link rel="preconnect" href="https://api.themoviedb.org" crossorigin />
+    <link rel="preconnect" href="https://image.tmdb.org" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NevAtlas — World Poster Canvas</title>
+    <title>Nevflix</title>
   </head>
   <body>
     <div id="root"></div>
