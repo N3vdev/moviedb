@@ -14,6 +14,11 @@ export interface SpecialCard {
   tags?: string[]
   description?: string
   videoDescription?: string
+  // A second video reachable only from the first one, via a "flip" reveal
+  // (see SpecialCardModal.tsx) — optional so this stays a no-op for cards
+  // that don't have one.
+  secondVideoSrc?: string
+  secondVideoTitle?: string
 }
 
 const IMG_BASE = `${import.meta.env.BASE_URL}img`
@@ -35,6 +40,8 @@ export const SPECIAL_CARDS: SpecialCard[] = [
     description:
       "Known for being the friend everyone wants and the last person you'd ever want to argue with. Some stories sound too unbelievable to be true, this isn't one of them.\n\nBased on real-life events. She might break your bones. Men, consider this your only warning 💀",
     videoDescription: '😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭',
+    secondVideoSrc: `${IMG_BASE}/srii-final.mp4`,
+    secondVideoTitle: 'The Real Edit — For My Bestie',
   },
   {
     id: 'joel',
