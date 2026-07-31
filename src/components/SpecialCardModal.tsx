@@ -15,7 +15,7 @@ const BACKDROP_FADE = { duration: 0.3, ease: [0.16, 1, 0.3, 1] } as const
 // delays so they twinkle out of sync with each other rather than in unison.
 const SRII_SPARKLES = [
   { top: '7%', left: '9%', size: '1.1rem', delay: '0s', emoji: '✨' },
-  { top: '14%', left: '89%', size: '0.9rem', delay: '0.5s', emoji: '💗' },
+  { top: '14%', left: '89%', size: '0.9rem', delay: '0.5s', emoji: '✨' },
   { top: '88%', left: '90%', size: '1rem', delay: '1s', emoji: '✨' },
   { top: '82%', left: '7%', size: '0.8rem', delay: '1.5s', emoji: '💫' },
   { top: '48%', left: '95%', size: '0.75rem', delay: '2s', emoji: '✨' },
@@ -24,80 +24,55 @@ const SRII_SPARKLES = [
 
 export default function SpecialCardModal({ selected, onClose }: SpecialCardModalProps) {
   const [showVideo, setShowVideo] = useState(false)
-  // A plain `<video src>` only guarantees the browser has enough of the file
-  // buffered to START — on a slow connection it can still stall mid-playback
-  // waiting for more to arrive. Fetching the whole file into memory first
-  // and only then handing the player a blob URL trades a short loading wait
-  // up front for a guarantee it can never rebuffer once it starts.
-  const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null)
-  const [loadProgress, setLoadProgress] = useState<number | null>(null)
   // Surfaces a real decode/playback error instead of leaving the video area
   // silently black — the previous plain `autoPlay` attribute failed with no
   // error at all when a browser's autoplay policy blocked it, which is
   // exactly the kind of failure this exists to catch if it happens again.
   const [videoError, setVideoError] = useState<string | null>(null)
-  const blobUrlRef = useRef<string | null>(null)
+  // Starts unmuted at 30% volume. Unmuted autoplay's permission varies by
+  // browser/profile and isn't something to fully trust — but the failure
+  // mode that actually bit us (dead silent, no error, no fallback engaging)
+  // wasn't really about muted-vs-unmuted, it was that detecting the
+  // failure via the `.play()` promise's rejection can't be trusted: some
+  // browsers can leave that promise never settling instead of rejecting
+  // it, so a catch-based fallback simply never fires. The effect below
+  // sidesteps that by directly checking, after a short window, whether the
+  // video is actually advancing — that's an observable DOM fact, not a
+  // promise we're hoping resolves — and only falls back to muted (always
+  // allowed, everywhere) if it genuinely isn't.
+  const [isMuted, setIsMuted] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const open = selected !== null
 
   useEffect(() => {
     setShowVideo(false)
+    setVideoError(null)
+    setIsMuted(false)
   }, [selected])
 
-  // Downloads the entire video the moment "Watch Now" is pressed. Cancels
-  // and revokes cleanly on Back/close/unmount so nothing keeps downloading
-  // or leaks a blob URL once nobody can see it anymore.
   useEffect(() => {
-    if (!showVideo || !selected?.videoSrc) return
-
-    const controller = new AbortController()
-    setVideoBlobUrl(null)
-    setLoadProgress(0)
     setVideoError(null)
+    setIsMuted(false)
+  }, [showVideo])
 
-    ;(async () => {
-      try {
-        const res = await fetch(selected.videoSrc!, { signal: controller.signal })
-        const total = Number(res.headers.get('content-length')) || 0
-        const reader = res.body?.getReader()
-        if (!reader) {
-          const blob = await res.blob()
-          if (controller.signal.aborted) return
-          blobUrlRef.current = URL.createObjectURL(blob)
-          setVideoBlobUrl(blobUrlRef.current)
-          return
-        }
-        const chunks: BlobPart[] = []
-        let received = 0
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          chunks.push(value)
-          received += value.byteLength
-          if (total > 0) setLoadProgress(Math.min(1, received / total))
-        }
-        if (controller.signal.aborted) return
-        blobUrlRef.current = URL.createObjectURL(new Blob(chunks))
-        setVideoBlobUrl(blobUrlRef.current)
-      } catch (err) {
-        if ((err as Error).name === 'AbortError') return
-        // Fall back to a direct, browser-streamed src rather than leaving
-        // the user stuck on a loading spinner forever if the fetch itself
-        // failed (e.g. blocked by an extension, or a CORS edge case).
-        setVideoBlobUrl(selected.videoSrc ?? null)
+  useEffect(() => {
+    if (!showVideo) return
+    const timer = setTimeout(() => {
+      const el = videoRef.current
+      // readyState >= 2 (HAVE_CURRENT_DATA) rules out "still loading" —
+      // this only fires for a video that has data available but genuinely
+      // isn't playing, i.e. autoplay was actually blocked.
+      if (el && el.paused && el.currentTime === 0 && el.readyState >= 2) {
+        setIsMuted(true)
+        el.play().catch(() => {
+          // Even muted playback was refused — vanishingly rare, but leave
+          // visible controls rather than a dead box as a last resort.
+          el.controls = true
+        })
       }
-    })()
-
-    return () => {
-      controller.abort()
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current)
-        blobUrlRef.current = null
-      }
-      setVideoBlobUrl(null)
-      setLoadProgress(null)
-      setVideoError(null)
-    }
-  }, [showVideo, selected])
+    }, 700)
+    return () => clearTimeout(timer)
+  }, [showVideo])
 
   useEffect(() => {
     if (!open) return
@@ -173,40 +148,11 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
           <>
             {showVideo && selected.videoSrc ? (
               <div className="relative aspect-video w-full bg-black">
-                {videoBlobUrl && !videoError ? (
+                {!videoError ? (
                   <video
                     ref={(el) => {
-                      if (!el) return
-                      el.volume = 0.3
-                      // Deliberately NOT relying on the bare `autoPlay`
-                      // attribute: when a browser's autoplay policy blocks
-                      // it, that fails completely silently — no error
-                      // event, nothing in the console, just a black
-                      // <video> forever. That silent failure is exactly
-                      // what showed up here. It's made worse by this
-                      // element only mounting once the full download
-                      // finishes (could be several seconds after the
-                      // "Watch Now" click), which some browsers treat as
-                      // too far removed from the original click to still
-                      // count as "the user asked for audio." Calling
-                      // .play() ourselves lets us detect that rejection
-                      // and recover: retry muted (essentially every
-                      // browser allows autoplay once muted), then restore
-                      // volume immediately after playback has actually
-                      // started.
-                      el.play().catch(() => {
-                        el.muted = true
-                        el.play()
-                          .then(() => {
-                            el.muted = false
-                          })
-                          .catch(() => {
-                            // Still blocked even muted — leave it paused
-                            // with controls rather than a dead black box,
-                            // so there's at least a way to start it.
-                            el.controls = true
-                          })
-                      })
+                      videoRef.current = el
+                      if (el) el.volume = 0.3
                     }}
                     onError={(e) => {
                       const err = e.currentTarget.error
@@ -218,32 +164,16 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                       }
                       setVideoError(err ? messages[err.code] ?? 'Unknown playback error' : 'Unknown playback error')
                     }}
-                    src={videoBlobUrl}
+                    src={selected.videoSrc}
+                    autoPlay
+                    muted={isMuted}
+                    playsInline
                     className="absolute inset-0 h-full w-full"
                   />
-                ) : videoError ? (
+                ) : (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-6 text-center">
                     <span className="text-sm font-medium text-white/80">Couldn't play this video</span>
                     <span className="text-xs text-white/50">{videoError}</span>
-                  </div>
-                ) : (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
-                    <div className="flex flex-col items-center gap-1.5">
-                      <span className="text-xs font-medium text-white/50">
-                        {loadProgress !== null && loadProgress > 0
-                          ? `Loading ${Math.round(loadProgress * 100)}%`
-                          : 'Loading'}
-                      </span>
-                      {loadProgress !== null && loadProgress > 0 && (
-                        <div className="h-1 w-32 overflow-hidden rounded-full bg-white/10">
-                          <div
-                            className="h-full rounded-full bg-white/70 transition-[width] duration-200 ease-out"
-                            style={{ width: `${loadProgress * 100}%` }}
-                          />
-                        </div>
-                      )}
-                    </div>
                   </div>
                 )}
                 <button
@@ -256,6 +186,36 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                   </svg>
                   Back
                 </button>
+                {!videoError && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // A click is a genuine, synchronous user gesture, so
+                      // unmuting (or re-muting) an already-playing video here
+                      // is always allowed — no autoplay-policy ambiguity at
+                      // all, unlike the initial autoplay itself.
+                      setIsMuted((m) => {
+                        const next = !m
+                        if (videoRef.current) videoRef.current.muted = next
+                        return next
+                      })
+                    }}
+                    aria-label={isMuted ? 'Unmute' : 'Mute'}
+                    className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white/85 backdrop-blur-md transition-colors hover:bg-black/80 hover:text-white"
+                  >
+                    {isMuted ? (
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M11 5 6 9H2v6h4l5 4V5Z" />
+                        <path d="m23 9-6 6M17 9l6 6" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M11 5 6 9H2v6h4l5 4V5Z" />
+                        <path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" />
+                      </svg>
+                    )}
+                  </button>
+                )}
               </div>
             ) : (
               <div className={`relative h-72 w-full sm:h-80 ${isSrii ? 'bg-[#241620]' : 'bg-[#1c1c22]'}`}>
