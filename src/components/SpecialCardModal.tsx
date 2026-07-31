@@ -87,7 +87,13 @@ interface VideoFaceProps {
   /** True once playback has genuinely failed, so the parent can hide the
    *  toolbar's now-pointless Mute button. */
   onErrorChange?: (hasError: boolean) => void
+  /** video1 only — fires as playback nears its end, so the parent can
+   *  reveal the "Click here" flip prompt only in the last few seconds
+   *  rather than for the whole video. */
+  onNearEnd?: (nearEnd: boolean) => void
 }
+
+const NEAR_END_THRESHOLD_SECONDS = 3
 
 // One "side" of the video area — used for both video1 and video2 in the
 // flip container below (only ever one mounted at a time — see the comment
@@ -108,7 +114,7 @@ interface VideoFaceProps {
 // practice; contain is the safety net for the brief window before that
 // measurement lands, not the primary sizing mechanism.
 const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace(
-  { src, style, onAspectRatio, showIntroBar, onMutedChange, onErrorChange },
+  { src, style, onAspectRatio, showIntroBar, onMutedChange, onErrorChange, onNearEnd },
   ref,
 ) {
   const [isMuted, setIsMuted] = useState(false)
@@ -186,6 +192,12 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
             const v = e.currentTarget
             if (v.videoWidth && v.videoHeight) onAspectRatio?.(v.videoWidth / v.videoHeight)
           }}
+          onTimeUpdate={(e) => {
+            if (!onNearEnd) return
+            const v = e.currentTarget
+            if (!Number.isFinite(v.duration)) return
+            onNearEnd(v.duration - v.currentTime <= NEAR_END_THRESHOLD_SECONDS)
+          }}
           onError={(e) => {
             const err = e.currentTarget.error
             const messages: Record<number, string> = {
@@ -247,6 +259,10 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   // right icon and hide Mute once there's nothing playing to mute.
   const [isMuted, setIsMuted] = useState(false)
   const [hasVideoError, setHasVideoError] = useState(false)
+  // True once video1 is within its last few seconds — gates the "Click
+  // here" flip prompt so it only appears near the end, not for the whole
+  // video (see the NEAR_END_THRESHOLD_SECONDS wiring on VideoFace).
+  const [video1NearEnd, setVideo1NearEnd] = useState(false)
   const activeVideoFaceRef = useRef<VideoFaceHandle>(null)
   const flipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const video2BlobUrlRef = useRef<string | null>(null)
@@ -267,6 +283,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
     setVideo2Ratio(null)
     setIsMuted(false)
     setHasVideoError(false)
+    setVideo1NearEnd(false)
     revokeVideo2Blob()
     if (flipTimerRef.current) {
       clearTimeout(flipTimerRef.current)
@@ -504,6 +521,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                       onAspectRatio={setVideo1Ratio}
                       onMutedChange={setIsMuted}
                       onErrorChange={setHasVideoError}
+                      onNearEnd={setVideo1NearEnd}
                     />
                   )}
                 </motion.div>
@@ -537,9 +555,14 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                   <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-white/60">
                     {selected.videoDescription}
                   </p>
-                  {selected.secondVideoSrc && (
-                    <div className="mt-3 flex items-center justify-end gap-2">
-                      <span className="text-xs text-white/50">Jk</span>
+                  {selected.secondVideoSrc && video1NearEnd && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                      className="mt-3 flex items-center justify-end gap-2"
+                    >
+                      <span className="text-xs text-white/50">Jkk, here's a short edit</span>
                       <button
                         type="button"
                         onClick={handleFlipToVideo2}
@@ -549,9 +572,9 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                             : 'bg-white text-black hover:bg-white/90'
                         }`}
                       >
-                        ➡️ Click here
+                        › Click here
                       </button>
-                    </div>
+                    </motion.div>
                   )}
                 </>
               )}
