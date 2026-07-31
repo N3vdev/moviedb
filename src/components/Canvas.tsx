@@ -867,7 +867,11 @@ export default function Canvas() {
               width: CARD_WIDTH,
               height: CARD_HEIGHT,
             }}
-            className="z-20 cursor-pointer overflow-hidden rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.35)] ring-2 ring-white transition-transform duration-200 ease-out hover:scale-[1.05]"
+            className={`z-20 cursor-pointer overflow-hidden rounded-xl transition-transform duration-200 ease-out hover:scale-[1.05] ${
+              activeSpecialCard.card.id === 'srii'
+                ? 'srii-glow ring-2 ring-pink-300/70'
+                : 'shadow-[0_8px_30px_rgba(0,0,0,0.35)] ring-2 ring-white'
+            }`}
           >
             <img
               src={activeSpecialCard.card.cardImage}

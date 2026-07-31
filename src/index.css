@@ -196,6 +196,35 @@ body,
   transition: transform 0.8s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.25s ease;
 }
 
+/* ---------------------------------------------------------------------------
+   #Srii special card — a one-off "cute" theme, distinct from the plain dark
+   styling every other special card uses (see SpecialCardModal.tsx's isSrii
+   check). Sparkles are plain emoji text nodes so there's no image asset to
+   ship — just a gentle opacity/scale twinkle plus a slow drift, staggered per
+   sparkle so they never blink in unison.
+   --------------------------------------------------------------------------- */
+
+.srii-sparkle {
+  position: absolute;
+  pointer-events: none;
+  animation: srii-twinkle 2.6s ease-in-out infinite;
+  filter: drop-shadow(0 0 6px rgba(244, 114, 182, 0.7));
+}
+
+@keyframes srii-twinkle {
+  0%, 100% { opacity: 0.35; transform: scale(0.8) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1.15) rotate(8deg); }
+}
+
+@keyframes srii-glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 114, 182, 0.45), 0 8px 30px rgba(0, 0, 0, 0.35); }
+  50% { box-shadow: 0 0 0 8px rgba(244, 114, 182, 0), 0 8px 30px rgba(0, 0, 0, 0.35); }
+}
+
+.srii-glow {
+  animation: srii-glow-pulse 2.2s ease-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .space-star-layer,
   .space-shooting-star,
@@ -209,6 +238,11 @@ body,
 
   .poster-card::after {
     display: none;
+  }
+
+  .srii-sparkle,
+  .srii-glow {
+    animation: none !important;
   }
 
   /* Belt-and-suspenders: Canvas.tsx already skips the reveal wave outright

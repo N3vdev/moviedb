@@ -31,7 +31,7 @@ export const SPECIAL_CARDS: SpecialCard[] = [
     name: 'Srii',
     cardImage: `${IMG_BASE}/srii.png`,
     videoSrc: `${IMG_BASE}/srii-meme.mp4`,
-    tags: ['Chad', 'Man Hater'],
+    tags: ['💅 Chad', '😼 Man Hater'],
     description:
       "Known for being the friend everyone wants and the last person you'd ever want to argue with. Some stories sound too unbelievable to be true, this isn't one of them.\n\nBased on real-life events. She might break your bones. Men, consider this your only warning 💀",
     videoDescription: '😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭😭',
