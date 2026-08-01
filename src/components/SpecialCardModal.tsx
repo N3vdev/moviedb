@@ -234,6 +234,10 @@ interface VideoFaceProps {
 }
 
 const NEAR_END_THRESHOLD_SECONDS = 3
+// Neither video should blast at full system volume the instant it
+// autoplays — applied on every mount (see the [src] effect below), so it
+// covers video1, video2, and the "Back from video2" remount alike.
+const DEFAULT_VOLUME = 0.5
 
 // One "side" of the video area — used for both video1 and video2 in the
 // flip container below (only ever one mounted at a time — see the comment
@@ -323,6 +327,7 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
     setVideoError(null)
     setPlayBlocked(false)
     setVideoEnded(false)
+    if (videoRef.current) videoRef.current.volume = DEFAULT_VOLUME
     onMutedChange?.(false)
     onErrorChange?.(false)
     onEndedChange?.(false)
