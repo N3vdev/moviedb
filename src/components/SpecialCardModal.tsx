@@ -119,8 +119,15 @@ interface VideoFaceProps {
    *  container (see the flip box below) can be sized to fit it exactly —
    *  no cropping, no unnecessary letterboxing either. */
   onAspectRatio?: (ratio: number) => void
-  /** video2 only — shows the decorative loading-bar overlay described above. */
+  /** video2 only — shows the loading-bar overlay described above. */
   showIntroBar?: boolean
+  /** video2 only — real byte-download progress (0-1), blended with a 3s
+   *  "fake" floor (see the introBar effect below) so the bar is genuinely
+   *  accurate whenever the real download is ahead of schedule, but never
+   *  gets stuck short of 100% for longer than the video's own baked-in
+   *  intro — by the time the intro ends, real content needs to play
+   *  regardless of true download state. */
+  progress?: number
   /** Mirrors this face's mute state up to the parent's toolbar (see
    *  SpecialCardModal) so its Mute/Unmute icon stays in sync even though
    *  the toolbar itself lives outside this component. */
@@ -155,7 +162,7 @@ const NEAR_END_THRESHOLD_SECONDS = 3
 // practice; contain is the safety net for the brief window before that
 // measurement lands, not the primary sizing mechanism.
 const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace(
-  { src, style, onAspectRatio, showIntroBar, onMutedChange, onErrorChange, onNearEnd },
+  { src, style, onAspectRatio, showIntroBar, progress, onMutedChange, onErrorChange, onNearEnd },
   ref,
 ) {
   const [isMuted, setIsMuted] = useState(false)
@@ -166,7 +173,9 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
   // with (and visually break) the custom toolbar.
   const [playBlocked, setPlayBlocked] = useState(false)
   const [introBarVisible, setIntroBarVisible] = useState(!!showIntroBar)
-  const [introBarFilled, setIntroBarFilled] = useState(false)
+  // The "fake" floor described on the `progress` prop above — climbs from
+  // 0 to 1 over INTRO_BAR_MS regardless of real download state.
+  const [introBarFakeFloor, setIntroBarFakeFloor] = useState(0)
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useImperativeHandle(ref, () => ({
@@ -215,20 +224,18 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
   useEffect(() => {
     if (!showIntroBar) return
     setIntroBarVisible(true)
-    setIntroBarFilled(false)
-    // A single rAF isn't reliable here — it can still land in the same
-    // paint as the 0% starting style, so the browser never gets a chance
-    // to commit "0%" before jumping to "100%", and the transition is
-    // skipped (the bar just appears already full). Nesting a second rAF
-    // guarantees a real paint of the 0% state happens first.
-    let raf2 = 0
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => setIntroBarFilled(true))
-    })
+    setIntroBarFakeFloor(0)
+    // Ticks the fake floor from 0 to 1 over INTRO_BAR_MS. Updating every
+    // 100ms (not every frame) is plenty smooth once bridged by the bar's
+    // own short CSS transition, and it's 30 state updates instead of ~180
+    // — cheap, but no point being wasteful for a purely cosmetic ticker.
+    const startTime = Date.now()
+    const interval = setInterval(() => {
+      setIntroBarFakeFloor(Math.min(1, (Date.now() - startTime) / INTRO_BAR_MS))
+    }, 100)
     const hideTimer = setTimeout(() => setIntroBarVisible(false), INTRO_BAR_MS)
     return () => {
-      cancelAnimationFrame(raf1)
-      cancelAnimationFrame(raf2)
+      clearInterval(interval)
       clearTimeout(hideTimer)
     }
   }, [showIntroBar, src])
@@ -277,8 +284,8 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="h-0.75 w-40 overflow-hidden rounded-full bg-white/10">
             <div
-              className="h-full rounded-full bg-linear-to-r from-pink-400 to-rose-400 transition-[width] ease-linear"
-              style={{ width: introBarFilled ? '100%' : '0%', transitionDuration: `${INTRO_BAR_MS}ms` }}
+              className="h-full rounded-full bg-linear-to-r from-pink-400 to-rose-400 transition-[width] duration-150 ease-out"
+              style={{ width: `${Math.round(Math.max(progress ?? 0, introBarFakeFloor) * 100)}%` }}
             />
           </div>
         </div>
@@ -312,20 +319,33 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   // over the old, still-mid-flip content.
   const [flipped, setFlipped] = useState(false)
   // video1, fully preloaded into memory before playback starts (see the
-  // 'video1-loading' effect below) — same rationale as video2's blob: a
-  // <video> playing from a Blob URL can never stall on the network, since
-  // every byte is already local. video1Progress (0-1) drives the real,
-  // byte-accurate loading bar shown during that stage.
+  // preload effect below) — same rationale as video2's blob: a <video>
+  // playing from a Blob URL can never stall on the network, since every
+  // byte is already local. This now starts the INSTANT the card's popup
+  // opens (see the effect's dependency on `selected` alone, not `stage`),
+  // not when "Watch Now" is clicked — by the time anyone actually presses
+  // it, video1 is very often already fully loaded, skipping the loading
+  // bar entirely. video1Progress (0-1) drives that bar for the rarer case
+  // where it isn't ready yet.
+  const [video1LoadState, setVideo1LoadState] = useState<'idle' | 'loading' | 'ready'>('idle')
   const [video1Src, setVideo1Src] = useState<string | undefined>(undefined)
   const [video1Progress, setVideo1Progress] = useState(0)
   // The fully-preloaded video2, as a blob URL. Only starts downloading once
-  // video1 has FULLY finished loading and started playing (stage becomes
-  // 'video1' only after that point — see the loading effect) rather than
-  // concurrently with it, so the two downloads never compete for bandwidth
-  // and make each other buffer. Falls back to the plain src (ordinary
-  // browser streaming) if the fetch hasn't finished yet or failed outright
-  // — the flip itself is never blocked waiting on this.
+  // video1LoadState becomes 'ready' — not concurrently with video1's own
+  // download — so the two fetches never compete for bandwidth and cause
+  // each other to buffer. Since video1 now starts loading at card-open
+  // time instead of at "Watch Now", video2 also gets a much earlier head
+  // start than before, which is what actually fixes it usually being fully
+  // ready well before anyone reaches the "Click here" flip. video2Progress
+  // drives the real portion of the flip's overlay loading bar (see
+  // VideoFace's `progress` prop and INTRO_BAR_MS' "fake floor" — the two
+  // are blended so the bar is accurate when the real download is ahead of
+  // schedule, but never blocks longer than the video's own baked-in
+  // intro). Falls back to the plain src (ordinary browser streaming) if
+  // the fetch hasn't finished yet or failed outright — the flip itself is
+  // never blocked waiting on this.
   const [video2Src, setVideo2Src] = useState<string | undefined>(undefined)
+  const [video2Progress, setVideo2Progress] = useState(0)
   const [video1Ratio, setVideo1Ratio] = useState<number | null>(null)
   const [video2Ratio, setVideo2Ratio] = useState<number | null>(null)
   // Mirrors from whichever VideoFace is currently mounted (see
@@ -358,12 +378,17 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
     }
   }
 
+  // Full reset — called when `selected` changes (a different card opened,
+  // or the modal closed entirely). Clears the preloaded blobs too, so a
+  // closed-and-reopened session starts genuinely fresh.
   const resetVideoState = () => {
     setStage('hero')
     setFlipped(false)
+    setVideo1LoadState('idle')
     setVideo1Src(undefined)
     setVideo1Progress(0)
     setVideo2Src(undefined)
+    setVideo2Progress(0)
     setVideo1Ratio(null)
     setVideo2Ratio(null)
     setIsMuted(false)
@@ -377,8 +402,28 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
     }
   }
 
+  // Lighter reset for the Back button — returns to the hero screen but
+  // deliberately leaves video1LoadState/video1Src/video2LoadState/video2Src
+  // untouched, so a preload that already finished (or is still in
+  // progress) isn't thrown away and re-fetched from scratch just because
+  // the user stepped back. Pressing "Watch Now" again reuses it instantly.
+  const handleBack = () => {
+    setStage('hero')
+    setFlipped(false)
+    setVideo1Ratio(null)
+    setVideo2Ratio(null)
+    setIsMuted(false)
+    setHasVideoError(false)
+    setVideo1NearEnd(false)
+    if (flipTimerRef.current) {
+      clearTimeout(flipTimerRef.current)
+      flipTimerRef.current = null
+    }
+  }
+
   useEffect(() => {
     resetVideoState()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected])
 
   useEffect(() => {
@@ -389,16 +434,19 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
     }
   }, [])
 
-  // Fully preloads video1 into memory before it ever starts playing — see
-  // fetchVideoWithProgress above for why this is the only real guarantee
-  // against mid-playback buffering. video1Progress drives the loading bar
-  // rendered for this stage below. Falls back to the plain src (ordinary
-  // streaming) if the fetch fails outright, rather than leaving the modal
-  // stuck on a loading bar forever.
+  // Fully preloads video1 into memory the INSTANT the card's popup opens —
+  // not gated on "Watch Now" being clicked (see the dependency on
+  // `selected` alone) — so it's very often already fully loaded by the
+  // time anyone actually presses it, skipping the loading bar entirely.
+  // See fetchVideoWithProgress above for why full preload is the only real
+  // guarantee against mid-playback buffering. Falls back to the plain src
+  // (ordinary streaming) if the fetch fails outright, rather than leaving
+  // the modal stuck on a loading bar forever.
   useEffect(() => {
-    if (stage !== 'video1-loading' || !selected?.videoSrc) return
+    if (!selected?.videoSrc) return
     let cancelled = false
     const controller = new AbortController()
+    setVideo1LoadState('loading')
     setVideo1Progress(0)
 
     fetchVideoWithProgress(selected.videoSrc, controller.signal, (fraction) => {
@@ -409,33 +457,46 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
         const url = URL.createObjectURL(blob)
         video1BlobUrlRef.current = url
         setVideo1Src(url)
-        setStage('video1')
+        setVideo1LoadState('ready')
       })
       .catch(() => {
         if (cancelled) return
         setVideo1Src(selected.videoSrc)
-        setStage('video1')
+        setVideo1LoadState('ready')
       })
 
     return () => {
       cancelled = true
       controller.abort()
     }
-  }, [stage, selected])
+  }, [selected])
 
-  // Preloads video2 entirely in the background only once video1 has fully
-  // loaded and started playing (stage only reaches 'video1' after that
-  // point — see the effect above), not concurrently with video1's own
-  // download, so the two fetches never compete for bandwidth and cause
-  // each other to buffer. Falls back to the plain src if the fetch fails;
-  // either way this never blocks the flip itself.
+  // If the loading screen is showing when video1 finishes, advance
+  // straight to playback automatically — the person is already sitting
+  // there waiting on the bar, nothing left to click.
   useEffect(() => {
-    if (stage !== 'video1' || !selected?.secondVideoSrc) return
+    if (stage === 'video1-loading' && video1LoadState === 'ready') {
+      setStage('video1')
+    }
+  }, [stage, video1LoadState])
+
+  // Preloads video2 entirely in the background only once video1LoadState
+  // becomes 'ready' — not concurrently with video1's own download — so the
+  // two fetches never compete for bandwidth and cause each other to
+  // buffer. Since video1 now starts loading at card-open time rather than
+  // at "Watch Now", this effectively gives video2 a much longer head start
+  // too, which is what actually keeps it from still being mid-download by
+  // the time the flip happens. Falls back to the plain src if the fetch
+  // fails; either way this never blocks the flip itself.
+  useEffect(() => {
+    if (video1LoadState !== 'ready' || !selected?.secondVideoSrc) return
     let cancelled = false
     const controller = new AbortController()
+    setVideo2Progress(0)
 
-    fetch(selected.secondVideoSrc, { signal: controller.signal })
-      .then((res) => res.blob())
+    fetchVideoWithProgress(selected.secondVideoSrc, controller.signal, (fraction) => {
+      if (!cancelled) setVideo2Progress(fraction)
+    })
       .then((blob) => {
         if (cancelled) return
         const url = URL.createObjectURL(blob)
@@ -451,7 +512,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
       cancelled = true
       controller.abort()
     }
-  }, [stage, selected])
+  }, [video1LoadState, selected])
 
   const handleFlipToVideo2 = () => {
     setFlipped(true)
@@ -555,7 +616,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
               <div className="relative z-10 flex items-center justify-between gap-2 px-3 py-2.5">
                 <button
                   type="button"
-                  onClick={resetVideoState}
+                  onClick={handleBack}
                   className="flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-white/85 transition-colors hover:bg-white/15 hover:text-white"
                 >
                   <BackIcon />
@@ -652,6 +713,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                       onMutedChange={setIsMuted}
                       onErrorChange={setHasVideoError}
                       showIntroBar
+                      progress={video2Progress}
                       style={{ transform: 'rotateY(180deg)' }}
                     />
                   ) : (
@@ -728,7 +790,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
               {stage === 'hero' && selected.videoSrc && (
                 <button
                   type="button"
-                  onClick={() => setStage('video1-loading')}
+                  onClick={() => setStage(video1LoadState === 'ready' ? 'video1' : 'video1-loading')}
                   className={`mt-4 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
                     isSrii
                       ? 'bg-linear-to-r from-pink-400 to-rose-400 text-white hover:from-pink-300 hover:to-rose-300'
