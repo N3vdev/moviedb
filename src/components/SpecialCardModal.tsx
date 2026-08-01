@@ -160,6 +160,11 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
 ) {
   const [isMuted, setIsMuted] = useState(false)
   const [videoError, setVideoError] = useState<string | null>(null)
+  // True in the vanishingly-rare case where even muted autoplay was
+  // blocked — shows a custom centered play button instead of ever falling
+  // back to the browser's native <video controls> bar, which would clash
+  // with (and visually break) the custom toolbar.
+  const [playBlocked, setPlayBlocked] = useState(false)
   const [introBarVisible, setIntroBarVisible] = useState(!!showIntroBar)
   const [introBarFilled, setIntroBarFilled] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -178,6 +183,7 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
   useEffect(() => {
     setIsMuted(false)
     setVideoError(null)
+    setPlayBlocked(false)
     onMutedChange?.(false)
     onErrorChange?.(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -193,9 +199,12 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
         setIsMuted(true)
         onMutedChange?.(true)
         el.play().catch(() => {
-          // Even muted playback was refused — vanishingly rare, but leave
-          // visible controls rather than a dead box as a last resort.
-          el.controls = true
+          // Even muted playback was refused — vanishingly rare. Never fall
+          // back to the browser's native <video controls> bar here — it
+          // renders its own play/timeline/volume UI on top of the video,
+          // clashing with (and visually breaking) the custom toolbar.
+          // Surface a matching custom play button instead.
+          setPlayBlocked(true)
         })
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -272,6 +281,23 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
               style={{ width: introBarFilled ? '100%' : '0%', transitionDuration: `${INTRO_BAR_MS}ms` }}
             />
           </div>
+        </div>
+      )}
+
+      {playBlocked && !videoError && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+          <button
+            type="button"
+            onClick={() => {
+              videoRef.current?.play().then(() => setPlayBlocked(false))
+            }}
+            aria-label="Play"
+            className="flex h-14 w-14 items-center justify-center rounded-full bg-white/15 text-white backdrop-blur-md transition-colors hover:bg-white/25"
+          >
+            <svg viewBox="0 0 24 24" className="h-6 w-6 translate-x-0.5" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </button>
         </div>
       )}
     </div>
