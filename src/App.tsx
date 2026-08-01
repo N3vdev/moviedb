@@ -18,7 +18,7 @@ function App() {
   }, [])
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-black">
+    <div className="h-dvh w-screen overflow-hidden bg-black">
       <div
         className="h-full w-full"
         style={{

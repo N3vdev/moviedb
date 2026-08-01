@@ -152,7 +152,7 @@ export default function MovieDetailModal({ selected, onClose }: MovieDetailModal
           }
         }}
         style={{ willChange: 'transform, opacity' }}
-        className={`glass-panel relative max-h-[88vh] w-full max-w-xl overflow-y-auto rounded-2xl shadow-[0_30px_90px_rgba(0,0,0,0.8)] transition-[filter] duration-300 ease-out sm:max-w-2xl md:max-w-3xl lg:max-w-4xl ${
+        className={`glass-panel relative max-h-[88dvh] w-full max-w-xl overflow-y-auto rounded-2xl shadow-[0_30px_90px_rgba(0,0,0,0.8)] transition-[filter] duration-300 ease-out sm:max-w-2xl md:max-w-3xl lg:max-w-4xl ${
           open ? 'blur-none' : 'blur-[14px]'
         }`}
       >

@@ -12,7 +12,10 @@
          mismatching this would preconnect a socket that can't be reused. -->
     <link rel="preconnect" href="https://api.themoviedb.org" crossorigin />
     <link rel="preconnect" href="https://image.tmdb.org" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover is what makes env(safe-area-inset-*) resolve to
+         real, non-zero values on notched/home-indicator phones — without
+         it every safe-area-inset-* is just 0px. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Nevflix</title>
   </head>
   <body>

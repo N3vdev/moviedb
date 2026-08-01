@@ -39,13 +39,67 @@ const DEFAULT_ASPECT_RATIO = 1
 // card's one-off "cute" theme (see the isSrii check below). Staggered
 // delays so they twinkle out of sync with each other rather than in unison.
 const SRII_SPARKLES = [
-  { top: '7%', left: '9%', size: '1.1rem', delay: '0s', emoji: '✨' },
-  { top: '14%', left: '89%', size: '0.9rem', delay: '0.5s', emoji: '✨' },
-  { top: '88%', left: '90%', size: '1rem', delay: '1s', emoji: '✨' },
-  { top: '82%', left: '7%', size: '0.8rem', delay: '1.5s', emoji: '💫' },
-  { top: '48%', left: '95%', size: '0.75rem', delay: '2s', emoji: '✨' },
-  { top: '4%', left: '48%', size: '0.7rem', delay: '0.8s', emoji: '💫' },
+  { top: '7%', left: '9%', size: '1.1rem', delay: '0s', duration: '3.4s', emoji: '✨' },
+  { top: '14%', left: '89%', size: '0.9rem', delay: '0.5s', duration: '4.1s', emoji: '✨' },
+  { top: '88%', left: '90%', size: '1rem', delay: '1s', duration: '3.7s', emoji: '✨' },
+  { top: '82%', left: '7%', size: '0.8rem', delay: '1.5s', duration: '4.4s', emoji: '💫' },
+  { top: '48%', left: '95%', size: '0.75rem', delay: '2s', duration: '3.2s', emoji: '✨' },
+  { top: '4%', left: '48%', size: '0.7rem', delay: '0.8s', duration: '4.6s', emoji: '💫' },
+  { top: '32%', left: '4%', size: '0.65rem', delay: '2.4s', duration: '3.9s', emoji: '⭐' },
+  { top: '66%', left: '93%', size: '0.7rem', delay: '1.2s', duration: '4.2s', emoji: '💫' },
+  { top: '94%', left: '46%', size: '0.6rem', delay: '2.8s', duration: '3.5s', emoji: '✨' },
 ] as const
+
+// Drifting colour blobs behind the hero portrait (see the .srii-aurora-blob
+// CSS). Deliberately oversized and pushed past the card's edges so only the
+// soft middles of each blob ever show through the clipped card.
+const SRII_AURORA = [
+  { className: 'left-[-25%] top-[-30%] h-72 w-72 bg-pink-500/45', animation: 'srii-aurora-a 14s ease-in-out infinite' },
+  { className: 'right-[-30%] top-[10%] h-64 w-64 bg-fuchsia-500/40', animation: 'srii-aurora-b 18s ease-in-out infinite' },
+  { className: 'bottom-[-35%] left-[15%] h-72 w-72 bg-rose-400/40', animation: 'srii-aurora-c 16s ease-in-out infinite' },
+] as const
+
+// One-shot particle burst fired on a correct quiz answer (see the quiz
+// overlay). Fixed offsets rather than random ones so the burst reads the
+// same every time — and so nothing has to be recomputed per render.
+const QUIZ_CONFETTI = [
+  { x: -96, y: -54, rotate: -140, delay: 0, emoji: '✨' },
+  { x: -62, y: -92, rotate: 96, delay: 0.04, emoji: '💖' },
+  { x: -18, y: -104, rotate: -70, delay: 0.02, emoji: '⭐' },
+  { x: 30, y: -98, rotate: 150, delay: 0.06, emoji: '✨' },
+  { x: 74, y: -66, rotate: -110, delay: 0.03, emoji: '💫' },
+  { x: 100, y: -18, rotate: 80, delay: 0.07, emoji: '💖' },
+  { x: -100, y: 8, rotate: 120, delay: 0.05, emoji: '💫' },
+  { x: -70, y: 62, rotate: -95, delay: 0.08, emoji: '⭐' },
+  { x: -14, y: 92, rotate: 135, delay: 0.06, emoji: '✨' },
+  { x: 44, y: 80, rotate: -125, delay: 0.09, emoji: '💖' },
+  { x: 88, y: 44, rotate: 105, delay: 0.04, emoji: '✨' },
+  { x: 12, y: -60, rotate: -60, delay: 0.1, emoji: '💫' },
+] as const
+
+// Hero-screen content cascades in rather than appearing all at once — the
+// container staggers, each child does the same short rise-and-fade.
+const HERO_STAGGER = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.07, delayChildren: 0.08 } },
+} as const
+
+const HERO_ITEM = {
+  hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] } },
+} as const
+
+// Same idea for the quiz card's inner content, but snappier — the prompt and
+// its two answers pop in one after the other rather than landing flat.
+const QUIZ_STAGGER = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.08, delayChildren: 0.05 } },
+} as const
+
+const QUIZ_ITEM = {
+  hidden: { opacity: 0, y: 10, scale: 0.94 },
+  show: { opacity: 1, y: 0, scale: 1, transition: { type: 'spring', stiffness: 420, damping: 24 } },
+} as const
 
 function BackIcon() {
   return (
@@ -830,10 +884,10 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   // Shared by the quiz overlay's answer buttons below — same treatment as
   // "Watch Now", since these are the primary choice a person's making in
   // that moment, not a secondary hint like the de-emphasized Jkk prompt.
-  const quizButtonClass = `rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+  const quizButtonClass = `rounded-full px-4 py-2 text-sm font-semibold ${
     isSrii
-      ? 'bg-linear-to-r from-pink-400 to-rose-400 text-white hover:from-pink-300 hover:to-rose-300'
-      : 'bg-white text-black hover:bg-white/90'
+      ? 'bg-linear-to-r from-pink-400 to-rose-400 text-white shadow-[0_6px_20px_-6px_rgba(244,114,182,0.85)]'
+      : 'bg-white text-black'
   }`
 
   return (
@@ -859,36 +913,70 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
         }}
         transition={MODAL_SPRING}
         style={{ willChange: 'transform, opacity, filter' }}
-        className={`relative w-full overflow-hidden rounded-2xl shadow-[0_30px_90px_rgba(0,0,0,0.8)] ${
+        className={`relative w-full ${
           // Srii's video content is portrait/near-square — a narrower card
           // fits that far better than the wider 16:9-tuned width every
           // other special card uses.
           isSrii ? 'max-w-sm sm:max-w-md' : 'max-w-xl sm:max-w-2xl'
-        } ${
-          // The pink/sparkly theme is only for the hero screen — once
-          // actually watching a video, the card goes solid black instead
-          // (and drops the sparkles below) so nothing competes with the
-          // video itself for attention.
-          isSrii
-            ? stage === 'hero'
-              ? 'bg-linear-to-b from-[#2a1620] via-[#1a1017] to-[#141418] ring-1 ring-pink-300/25'
-              : 'bg-black ring-1 ring-white/10'
-            : 'bg-[#141418] ring-1 ring-white/10'
         }`}
       >
-        {isSrii && stage === 'hero' && (
-          <div className="pointer-events-none absolute inset-0 z-10">
-            {SRII_SPARKLES.map((s, i) => (
-              <span
-                key={i}
-                className="srii-sparkle absolute select-none"
-                style={{ top: s.top, left: s.left, fontSize: s.size, animationDelay: s.delay }}
-              >
-                {s.emoji}
-              </span>
-            ))}
-          </div>
-        )}
+        {/* max-h/overflow live on this wrapper (not the rounded card inside)
+            so a scrollbar — on the rare device that shows one — rides the
+            card's outer edge rather than cutting a straight line through
+            its rounded corners. In landscape, or on any short viewport (a
+            phone rotated sideways, mainly), the hero image + full text can
+            comfortably exceed the visible height; without this the Close
+            button and "Watch Now" end up scrolled off-screen with no way
+            to reach them. */}
+        <div className="max-h-[88dvh] overflow-y-auto overscroll-contain rounded-2xl">
+        <div
+          className={`relative overflow-hidden rounded-2xl shadow-[0_30px_90px_rgba(0,0,0,0.8)] ${
+            // The pink/sparkly theme is only for the hero screen — once
+            // actually watching a video, the card goes solid black instead
+            // (and drops the sparkles below) so nothing competes with the
+            // video itself for attention.
+            isSrii
+              ? stage === 'hero'
+                ? 'bg-linear-to-b from-[#2a1620] via-[#1a1017] to-[#141418] ring-1 ring-pink-300/25'
+                : 'bg-black ring-1 ring-white/10'
+              : 'bg-[#141418] ring-1 ring-white/10'
+          }`}
+        >
+          {isSrii && stage === 'hero' && (
+            <>
+              {/* Ambient colour wash, clipped by the card. Sits at the very
+                  bottom of the stack — the hero image paints over its top
+                  half, and the text block below is transparent so the drift
+                  shows through behind the copy. */}
+              <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                {SRII_AURORA.map((blob, i) => (
+                  <div
+                    key={i}
+                    className={`srii-aurora-blob ${blob.className}`}
+                    style={{ animation: blob.animation }}
+                  />
+                ))}
+              </div>
+
+              <div className="pointer-events-none absolute inset-0 z-10">
+                {SRII_SPARKLES.map((s, i) => (
+                  <span
+                    key={i}
+                    className="srii-sparkle select-none"
+                    style={{
+                      top: s.top,
+                      left: s.left,
+                      fontSize: s.size,
+                      animationDelay: s.delay,
+                      animationDuration: s.duration,
+                    }}
+                  >
+                    {s.emoji}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
 
         {/* Hero stage: a single floating Close button, same as every other
             special card. Video stages: a proper toolbar ROW (see below,
@@ -941,16 +1029,33 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
             )}
 
             {stage === 'hero' ? (
-              <div className={`relative h-72 w-full sm:h-80 ${isSrii ? 'bg-[#241620]' : 'bg-[#1c1c22]'}`}>
+              <motion.div
+                initial={{ opacity: 0, scale: 1.04 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+                className={`relative h-72 w-full overflow-hidden sm:h-80 ${
+                  isSrii ? 'bg-[#241620]' : 'bg-[#1c1c22]'
+                }`}
+              >
                 {heroImage && (
-                  <img src={heroImage} alt="" className="h-full w-full object-cover" />
+                  <img
+                    src={heroImage}
+                    alt=""
+                    draggable={false}
+                    className={`h-full w-full object-cover ${isSrii ? 'srii-kenburns' : ''}`}
+                  />
                 )}
                 <div
                   className={`absolute inset-0 bg-linear-to-t via-transparent to-transparent ${
                     isSrii ? 'from-[#241620]' : 'from-[#141418]'
                   }`}
                 />
-              </div>
+                {/* A soft pink rim-light along the image's lower edge, so the
+                    portrait melts into the card instead of ending on a line. */}
+                {isSrii && (
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-pink-500/20 to-transparent" />
+                )}
+              </motion.div>
             ) : stage === 'video1-loading' ? (
               // A real, byte-accurate loading bar (see fetchVideoWithProgress)
               // rather than a decorative timer — it only reaches full once
@@ -1043,30 +1148,64 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="absolute inset-0 z-20 flex items-center justify-center bg-black/55 px-6 backdrop-blur-md"
+                      transition={{ duration: 0.25 }}
+                      className="absolute inset-0 z-20 flex items-center justify-center overflow-hidden bg-black/60 px-6 backdrop-blur-lg"
                     >
+                      {/* Warm spotlight behind the card so it reads as lit
+                          rather than just pasted onto a dark rectangle. */}
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(244,114,182,0.2),transparent_65%)]" />
+
                       <motion.div
-                        initial={{ opacity: 0, scale: 0.85, y: 8 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.9 }}
-                        transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-                        className={`w-full max-w-65 rounded-3xl px-6 py-7 text-center ring-1 backdrop-blur-xl transition-colors duration-200 ${
+                        initial={{ opacity: 0, scale: 0.8, y: 18, rotate: -3 }}
+                        animate={{ opacity: 1, scale: 1, y: 0, rotate: 0 }}
+                        exit={{ opacity: 0, scale: 0.86, y: -10 }}
+                        transition={{ type: 'spring', stiffness: 320, damping: 22 }}
+                        className={`relative w-full max-w-65 rounded-[1.75rem] px-6 py-7 text-center ring-1 backdrop-blur-2xl transition-[background-color,box-shadow] duration-300 ${
                           quizReaction === 'wrong'
-                            ? 'bg-red-500/10 ring-red-400/30'
+                            ? 'bg-red-500/12 shadow-[0_0_60px_-12px_rgba(248,113,113,0.65)] ring-red-400/35'
                             : quizReaction === 'right'
-                              ? 'bg-pink-400/10 ring-pink-300/35'
-                              : 'bg-white/10 ring-pink-300/20'
+                              ? 'bg-pink-400/12 shadow-[0_0_70px_-10px_rgba(244,114,182,0.85)] ring-pink-300/45'
+                              : 'bg-white/10 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.9)] ring-pink-300/25'
                         }`}
                       >
+                        {/* One-shot burst on a correct answer. Unmounted the
+                            moment the reaction ends, so these never linger as
+                            live animations. */}
+                        {quizReaction === 'right' && (
+                          <div className="pointer-events-none absolute left-1/2 top-1/2 h-0 w-0">
+                            {QUIZ_CONFETTI.map((c, i) => (
+                              <motion.span
+                                key={i}
+                                initial={{ opacity: 0, x: 0, y: 0, scale: 0.3, rotate: 0 }}
+                                animate={{
+                                  opacity: [0, 1, 1, 0],
+                                  x: c.x,
+                                  y: c.y,
+                                  scale: [0.3, 1.1, 1, 0.7],
+                                  rotate: c.rotate,
+                                }}
+                                transition={{ duration: 0.95, delay: c.delay, ease: [0.16, 1, 0.3, 1] }}
+                                className="absolute -ml-2 -mt-2 text-base"
+                              >
+                                {c.emoji}
+                              </motion.span>
+                            ))}
+                          </div>
+                        )}
+
                         <AnimatePresence mode="wait">
                           {quizReaction === 'wrong' ? (
                             <motion.div
                               key="wrong"
                               initial={{ opacity: 0, scale: 0.7 }}
-                              animate={{ opacity: 1, scale: 1, x: [0, -10, 10, -8, 8, -4, 4, 0] }}
+                              animate={{
+                                opacity: 1,
+                                scale: 1,
+                                x: [0, -12, 12, -10, 10, -5, 5, 0],
+                                rotate: [0, -3, 3, -2, 2, 0],
+                              }}
                               exit={{ opacity: 0, scale: 0.8 }}
-                              transition={{ duration: 0.45, ease: 'easeOut' }}
+                              transition={{ duration: 0.5, ease: 'easeOut' }}
                             >
                               <img
                                 src={QUIZ_INCORRECT_IMG}
@@ -1090,45 +1229,58 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                                 className="max-h-48 w-auto rounded-2xl object-contain"
                               />
                             </motion.div>
-                          ) : quizStage === 'quiz1' ? (
-                            <motion.div
-                              key="quiz1"
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              exit={{ opacity: 0 }}
-                              transition={{ duration: 0.15 }}
-                              className="flex flex-col items-center gap-4"
-                            >
-                              <span className="text-3xl">🤔</span>
-                              <p className="text-sm font-semibold text-white">Select the correct word</p>
-                              <div className="flex gap-3">
-                                <button type="button" onClick={handleQuizCorrectStep} className={quizButtonClass}>
-                                  vadapav
-                                </button>
-                                <button type="button" onClick={handleQuizWrong} className={quizButtonClass}>
-                                  samosa
-                                </button>
-                              </div>
-                            </motion.div>
                           ) : (
                             <motion.div
-                              key="quiz2"
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              exit={{ opacity: 0 }}
-                              transition={{ duration: 0.15 }}
+                              key={quizStage}
+                              variants={QUIZ_STAGGER}
+                              initial="hidden"
+                              animate="show"
+                              exit={{ opacity: 0, scale: 0.94, transition: { duration: 0.15 } }}
                               className="flex flex-col items-center gap-4"
                             >
-                              <span className="text-3xl">😏</span>
-                              <p className="text-sm font-semibold text-white">Hattttttt!! Nahi dikhaunga</p>
-                              <div className="flex gap-3">
-                                <button type="button" onClick={handleQuizWrong} className={quizButtonClass}>
-                                  Dikha bc
-                                </button>
-                                <button type="button" onClick={handleQuizAdvance} className={quizButtonClass}>
-                                  Ruk Tu
-                                </button>
-                              </div>
+                              {/* Two layers on purpose: the outer span takes
+                                  part in the parent's stagger, the inner one
+                                  owns the endless bob. One element can't do
+                                  both — an explicit `animate` object opts a
+                                  child out of variant inheritance entirely. */}
+                              <motion.span variants={QUIZ_ITEM} className="text-4xl">
+                                <motion.span
+                                  animate={{ y: [0, -5, 0], rotate: [0, 6, -6, 0] }}
+                                  transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+                                  className="inline-block"
+                                >
+                                  {quizStage === 'quiz1' ? '🤔' : '😏'}
+                                </motion.span>
+                              </motion.span>
+
+                              <motion.p variants={QUIZ_ITEM} className="text-sm font-semibold text-white">
+                                {quizStage === 'quiz1'
+                                  ? 'Select the correct word'
+                                  : 'Hattttttt!! Nahi dikhaunga'}
+                              </motion.p>
+
+                              <motion.div variants={QUIZ_ITEM} className="flex gap-3">
+                                <motion.button
+                                  type="button"
+                                  onClick={quizStage === 'quiz1' ? handleQuizCorrectStep : handleQuizWrong}
+                                  whileHover={{ scale: 1.07, y: -2 }}
+                                  whileTap={{ scale: 0.94 }}
+                                  transition={{ type: 'spring', stiffness: 460, damping: 20 }}
+                                  className={quizButtonClass}
+                                >
+                                  {quizStage === 'quiz1' ? 'vadapav' : 'Dikha bc'}
+                                </motion.button>
+                                <motion.button
+                                  type="button"
+                                  onClick={quizStage === 'quiz1' ? handleQuizWrong : handleQuizAdvance}
+                                  whileHover={{ scale: 1.07, y: -2 }}
+                                  whileTap={{ scale: 0.94 }}
+                                  transition={{ type: 'spring', stiffness: 460, damping: 20 }}
+                                  className={quizButtonClass}
+                                >
+                                  {quizStage === 'quiz1' ? 'samosa' : 'Ruk Tu'}
+                                </motion.button>
+                              </motion.div>
                             </motion.div>
                           )}
                         </AnimatePresence>
@@ -1139,26 +1291,69 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
               </div>
             )}
 
-            <div className="px-6 pb-6 pt-4">
-              <h2 className="text-2xl font-semibold tracking-tight text-white">
+            <div className="relative z-10 px-6 pb-6 pt-4">
+              {/* Re-keyed when the title actually changes (hero/video1 name vs
+                  video2's own title) so it cross-fades on the way in rather
+                  than swapping text in place mid-flip. */}
+              <motion.h2
+                key={stage === 'video2' ? 'title-video2' : 'title-main'}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                className="text-2xl font-semibold tracking-tight text-white"
+              >
                 {stage === 'video2' ? selected.secondVideoTitle ?? selected.name : selected.name}
-              </h2>
+              </motion.h2>
 
-              {stage === 'hero' && selected.tags && selected.tags.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {selected.tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className={`rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ${
+              {stage === 'hero' && (
+                <motion.div variants={HERO_STAGGER} initial="hidden" animate="show">
+                  {selected.tags && selected.tags.length > 0 && (
+                    <motion.div variants={HERO_ITEM} className="mt-2 flex flex-wrap gap-1.5">
+                      {selected.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className={`rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ${
+                            isSrii
+                              ? 'bg-pink-400/15 text-pink-100 ring-pink-300/25'
+                              : 'bg-white/10 text-white/70 ring-white/15'
+                          }`}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </motion.div>
+                  )}
+
+                  {selected.description && (
+                    <motion.p
+                      variants={HERO_ITEM}
+                      className="mt-3 whitespace-pre-line text-sm leading-relaxed text-white/60"
+                    >
+                      {selected.description}
+                    </motion.p>
+                  )}
+
+                  {selected.videoSrc && (
+                    <motion.button
+                      variants={HERO_ITEM}
+                      type="button"
+                      onClick={() => setStage(video1LoadState === 'ready' ? 'video1' : 'video1-loading')}
+                      whileHover={{ scale: 1.04 }}
+                      whileTap={{ scale: 0.97 }}
+                      transition={{ type: 'spring', stiffness: 420, damping: 24 }}
+                      className={`mt-4 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold ${
                         isSrii
-                          ? 'bg-pink-400/15 text-pink-100 ring-pink-300/25'
-                          : 'bg-white/10 text-white/70 ring-white/15'
+                          ? 'srii-shimmer relative overflow-hidden bg-linear-to-r from-pink-400 to-rose-400 text-white shadow-[0_8px_24px_-6px_rgba(244,114,182,0.7)]'
+                          : 'bg-white text-black hover:bg-white/90'
                       }`}
                     >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                      Watch Now
+                    </motion.button>
+                  )}
+                </motion.div>
               )}
 
               {stage === 'video1' && selected.videoDescription && (
@@ -1186,31 +1381,11 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                 </>
               )}
 
-              {stage === 'hero' && selected.description && (
-                <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-white/60">
-                  {selected.description}
-                </p>
-              )}
-
-              {stage === 'hero' && selected.videoSrc && (
-                <button
-                  type="button"
-                  onClick={() => setStage(video1LoadState === 'ready' ? 'video1' : 'video1-loading')}
-                  className={`mt-4 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
-                    isSrii
-                      ? 'bg-linear-to-r from-pink-400 to-rose-400 text-white hover:from-pink-300 hover:to-rose-300'
-                      : 'bg-white text-black hover:bg-white/90'
-                  }`}
-                >
-                  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                  Watch Now
-                </button>
-              )}
             </div>
-          </>
-        )}
+            </>
+          )}
+        </div>
+        </div>
       </motion.div>
     </div>
   )

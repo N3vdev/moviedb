@@ -13,6 +13,15 @@ html,
 body,
 #root {
   height: 100%;
+  /* 100% alone resolves against the "large" viewport on mobile — the size
+     the page WOULD be if the browser's address bar were hidden — so when
+     that bar is actually showing, anything sized/positioned off this
+     height reaches past the real visible area (this is the root cause of
+     fixed bottom bars landing under a mobile browser's UI). dvh tracks the
+     genuinely-visible viewport as that bar shows/hides. Kept as a second
+     declaration, not a replacement — browsers that don't understand `dvh`
+     simply ignore that one line and keep the 100% above. */
+  height: 100dvh;
   margin: 0;
   overflow: hidden;
   background: #000;
@@ -207,13 +216,19 @@ body,
 .srii-sparkle {
   position: absolute;
   pointer-events: none;
-  animation: srii-twinkle 2.6s ease-in-out infinite;
+  /* Float and twinkle share one timeline rather than two stacked animations —
+     both drive `transform`, so a second animation would simply win outright
+     instead of composing. */
+  animation: srii-twinkle 3.4s ease-in-out infinite;
   filter: drop-shadow(0 0 6px rgba(244, 114, 182, 0.7));
+  will-change: transform, opacity;
 }
 
 @keyframes srii-twinkle {
-  0%, 100% { opacity: 0.35; transform: scale(0.8) rotate(0deg); }
-  50% { opacity: 1; transform: scale(1.15) rotate(8deg); }
+  0%, 100% { opacity: 0.3; transform: translate3d(0, 0, 0) scale(0.8) rotate(0deg); }
+  25% { opacity: 0.9; transform: translate3d(2px, -6px, 0) scale(1.1) rotate(10deg); }
+  50% { opacity: 1; transform: translate3d(-2px, -11px, 0) scale(1.2) rotate(-8deg); }
+  75% { opacity: 0.65; transform: translate3d(1px, -5px, 0) scale(1) rotate(5deg); }
 }
 
 @keyframes srii-glow-pulse {
@@ -223,6 +238,64 @@ body,
 
 .srii-glow {
   animation: srii-glow-pulse 2.2s ease-out infinite;
+}
+
+/* Slow-drifting aurora blobs behind the hero image. Three overlapping
+   translucent circles on independent timings — the classic "gradient mesh"
+   look, but animated purely with transform so it stays on the compositor. */
+.srii-aurora-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(36px);
+  will-change: transform;
+}
+
+@keyframes srii-aurora-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(16%, -12%, 0) scale(1.25); }
+}
+
+@keyframes srii-aurora-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.15); }
+  50% { transform: translate3d(-18%, 12%, 0) scale(0.9); }
+}
+
+@keyframes srii-aurora-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(0.95); }
+  50% { transform: translate3d(12%, 16%, 0) scale(1.2); }
+}
+
+/* Very slow Ken Burns push on the hero portrait, so the card feels alive
+   even while nothing is happening. */
+.srii-kenburns {
+  will-change: transform;
+  animation: srii-kenburns 20s ease-in-out infinite alternate;
+}
+
+@keyframes srii-kenburns {
+  from { transform: scale(1.02) translate3d(0, 0, 0); }
+  to { transform: scale(1.14) translate3d(-1.5%, -2.5%, 0); }
+}
+
+/* Light sweep across the primary button — a periodic invitation to press it. */
+.srii-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.5) 50%,
+    transparent 65%
+  );
+  transform: translate3d(-130%, 0, 0);
+  will-change: transform;
+  animation: srii-shimmer 3.6s ease-in-out infinite;
+}
+
+@keyframes srii-shimmer {
+  0% { transform: translate3d(-130%, 0, 0); }
+  60%, 100% { transform: translate3d(130%, 0, 0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -241,8 +314,17 @@ body,
   }
 
   .srii-sparkle,
-  .srii-glow {
+  .srii-glow,
+  .srii-aurora-blob,
+  .srii-kenburns,
+  .srii-shimmer::after {
     animation: none !important;
+  }
+
+  /* The shimmer's resting position is off-screen-left, which would leave a
+     stray bright band parked over the button once its animation is killed. */
+  .srii-shimmer::after {
+    display: none;
   }
 
   /* Belt-and-suspenders: Canvas.tsx already skips the reveal wave outright

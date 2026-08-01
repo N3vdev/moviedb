@@ -20,7 +20,15 @@ export default function ZoomControls({
   onOpenAbout,
 }: ZoomControlsProps) {
   return (
-    <div className="glass-panel fixed bottom-6 right-6 z-10 flex items-center gap-1 rounded-full p-1.5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
+    <div
+      className="glass-panel fixed right-6 z-10 flex items-center gap-1 rounded-full p-1.5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]"
+      // A mobile browser's own bottom bar (URL bar / home-indicator) can
+      // sit right where a plain `bottom-6` would — env() is 0 on browsers
+      // that don't support it (calc() falls back to just the 1.5rem), and
+      // real on ones that do (see viewport-fit=cover in index.html), so
+      // this never has less than 1.5rem of clearance either way.
+      style={{ bottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
+    >
       <button
         type="button"
         onClick={onToggleFilters}

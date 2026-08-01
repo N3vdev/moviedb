@@ -42,7 +42,13 @@ export default function NavBar({
   }
 
   return (
-    <div className="fixed left-1/2 top-6 z-20 -translate-x-1/2">
+    <div
+      className="fixed left-1/2 z-20 -translate-x-1/2"
+      // Real headroom on notched phones in landscape (the notch/status-bar
+      // area moves to a side, but some devices still reserve a top inset)
+      // — env() is 0 wherever there's nothing to clear.
+      style={{ top: 'calc(1.5rem + env(safe-area-inset-top, 0px))' }}
+    >
       <div className="glass-panel flex items-center gap-1 rounded-full p-1.5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
         {TABS.map((tab) => {
           const active = filters.mediaType === tab.key

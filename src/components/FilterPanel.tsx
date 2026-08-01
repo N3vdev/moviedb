@@ -46,7 +46,12 @@ export default function FilterPanel({ filters, onChange, open, onClose }: Filter
 
   return (
     <div
-      className={`fixed bottom-24 left-1/2 z-10 w-full max-w-3xl -translate-x-1/2 px-4 ${open ? '' : 'pointer-events-none'}`}
+      className={`fixed left-1/2 z-10 w-full max-w-3xl -translate-x-1/2 px-4 ${open ? '' : 'pointer-events-none'}`}
+      // Stays clear of ZoomControls (which sits right below it) plus a real
+      // safe-area allowance on notched/gesture-bar phones — see the same
+      // pattern in ZoomControls.tsx for why calc()+env() rather than a
+      // fixed Tailwind bottom-* value.
+      style={{ bottom: 'calc(6rem + env(safe-area-inset-bottom, 0px))' }}
       aria-hidden={!open}
     >
       <motion.div
