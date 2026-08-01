@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+
 interface ZoomControlsProps {
   scale: number
   onZoomIn: () => void
@@ -19,6 +21,22 @@ export default function ZoomControls({
   filtersActive,
   onOpenAbout,
 }: ZoomControlsProps) {
+  const [isFullscreen, setIsFullscreen] = useState(() => !!document.fullscreenElement)
+
+  useEffect(() => {
+    const onFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [])
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen()
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {})
+    }
+  }
+
   return (
     <div
       className="glass-panel fixed right-6 z-10 flex items-center gap-1 rounded-full p-1.5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]"
@@ -91,6 +109,24 @@ export default function ZoomControls({
           <path d="M12 11v5" strokeLinecap="round" />
           <circle cx="12" cy="7.5" r="1.1" fill="currentColor" stroke="none" />
         </svg>
+      </button>
+      <div className="mx-1 h-5 w-px bg-white/15" />
+      <button
+        type="button"
+        onClick={toggleFullscreen}
+        aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+        aria-pressed={isFullscreen}
+        className="flex h-9 w-9 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/15 hover:text-white"
+      >
+        {isFullscreen ? (
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 4v3a2 2 0 0 1-2 2H4M20 9h-3a2 2 0 0 1-2-2V4M15 20v-3a2 2 0 0 1 2-2h3M4 15h3a2 2 0 0 1 2 2v3" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 9V6a2 2 0 0 1 2-2h3M20 9V6a2 2 0 0 1-2-2h-3M4 15v3a2 2 0 0 0 2 2h3M20 15v3a2 2 0 0 1-2 2h-3" />
+          </svg>
+        )}
       </button>
     </div>
   )
