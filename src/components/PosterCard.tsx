@@ -56,6 +56,8 @@ function PosterCard({ id, left, top, width, height, posterUrl, title, highlighte
           decoding="async"
           fetchPriority={visible ? 'high' : 'low'}
           onLoad={() => setLoaded(true)}
+          draggable={false}
+          onDragStart={(e) => e.preventDefault()}
           className={`poster-card-img h-full w-full object-cover group-hover:scale-[1.04] ${
             loaded ? 'opacity-100' : 'opacity-0'
           }`}

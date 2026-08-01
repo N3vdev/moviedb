@@ -225,7 +225,9 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
     if (!showIntroBar) return
     setIntroBarVisible(true)
     setIntroBarFakeFloor(0)
-    // Ticks the fake floor from 0 to 1 over INTRO_BAR_MS. Updating every
+    // Paces the bar's visual fill from 0 to 1 over INTRO_BAR_MS, ALWAYS —
+    // this is what gives the suspense-y reveal feel every single time,
+    // regardless of how far along the real download is. Updating every
     // 100ms (not every frame) is plenty smooth once bridged by the bar's
     // own short CSS transition, and it's 30 state updates instead of ~180
     // — cheap, but no point being wasteful for a purely cosmetic ticker.
@@ -239,6 +241,19 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
       clearTimeout(hideTimer)
     }
   }, [showIntroBar, src])
+
+  // The displayed value below (see the render) is capped to whichever is
+  // LOWER — the timer's pace or the real download progress — so it never
+  // visually overclaims ("100% done!") while genuinely still downloading.
+  // Since video2 is preloaded so early now that it's very often already
+  // fully downloaded by the time this bar even mounts, `progress` is
+  // usually already 1 and the timer alone paces the fill — which is
+  // exactly what restores the suspense-y ~3s reveal instead of it either
+  // (a) snapping to 100% instantly, or (b) vanishing with no animation at
+  // all. Once the timer itself reaches 1 (INTRO_BAR_MS has fully elapsed),
+  // the bar is forced to show complete regardless of true download state —
+  // the video needs to start now either way, per the "last stretch is
+  // fake" spec.
 
   return (
     <div className="absolute inset-0 bg-black" style={{ backfaceVisibility: 'hidden', ...style }}>
@@ -285,7 +300,9 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
           <div className="h-0.75 w-40 overflow-hidden rounded-full bg-white/10">
             <div
               className="h-full rounded-full bg-linear-to-r from-pink-400 to-rose-400 transition-[width] duration-150 ease-out"
-              style={{ width: `${Math.round(Math.max(progress ?? 0, introBarFakeFloor) * 100)}%` }}
+              style={{
+                width: `${Math.round((introBarFakeFloor >= 1 ? 1 : Math.min(introBarFakeFloor, progress ?? 1)) * 100)}%`,
+              }}
             />
           </div>
         </div>
@@ -576,12 +593,18 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
           // other special card uses.
           isSrii ? 'max-w-sm sm:max-w-md' : 'max-w-xl sm:max-w-2xl'
         } ${
+          // The pink/sparkly theme is only for the hero screen — once
+          // actually watching a video, the card goes solid black instead
+          // (and drops the sparkles below) so nothing competes with the
+          // video itself for attention.
           isSrii
-            ? 'bg-linear-to-b from-[#2a1620] via-[#1a1017] to-[#141418] ring-1 ring-pink-300/25'
+            ? stage === 'hero'
+              ? 'bg-linear-to-b from-[#2a1620] via-[#1a1017] to-[#141418] ring-1 ring-pink-300/25'
+              : 'bg-black ring-1 ring-white/10'
             : 'bg-[#141418] ring-1 ring-white/10'
         }`}
       >
-        {isSrii && (
+        {isSrii && stage === 'hero' && (
           <div className="pointer-events-none absolute inset-0 z-10">
             {SRII_SPARKLES.map((s, i) => (
               <span

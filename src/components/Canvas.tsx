@@ -136,6 +136,14 @@ export default function Canvas() {
   const hasCentered = useRef(false)
   const pressedDirectionsRef = useRef(new Set<'up' | 'down' | 'left' | 'right'>())
   const keyPanRafId = useRef<number | null>(null)
+  // MovieDetailModal/SpecialCardModal render as children of this same
+  // pan/zoom container (their backdrops are `fixed`, but `fixed` doesn't
+  // leave the DOM tree — pointer/wheel events fired on them still bubble
+  // up here), and nothing along the way stops that propagation. A ref
+  // (not state) so the hot-path pointer/wheel handlers below can check "is
+  // a modal open" without needing to be recreated every time one toggles —
+  // synced from the modal-open state via the effect right after it.
+  const modalBlockingRef = useRef(false)
 
   // One-time "domino" reveal on first load: cards pop in ring by ring from
   // the center cell outward (Chebyshev distance, so it grows evenly in all 8
@@ -170,6 +178,10 @@ export default function Canvas() {
   const [activeSpecialCard, setActiveSpecialCard] = useState<{ card: SpecialCard; left: number; top: number } | null>(null)
   const [openSpecialCard, setOpenSpecialCard] = useState<SpecialCard | null>(null)
   const [aboutOpen, setAboutOpen] = useState(false)
+
+  useEffect(() => {
+    modalBlockingRef.current = Boolean(selectedMovie || openSpecialCard || aboutOpen)
+  }, [selectedMovie, openSpecialCard, aboutOpen])
   const [rippleTrigger, setRippleTrigger] = useState<RippleTrigger | null>(null)
   const rippleCounter = useRef(0)
 
@@ -412,6 +424,11 @@ export default function Canvas() {
   }, [applyTransform])
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    // MovieDetailModal/SpecialCardModal live inside this same container
+    // (see modalBlockingRef above) — while one's open, pointer input over
+    // it must reach the modal's own controls, not pan/zoom the canvas
+    // sitting behind it.
+    if (modalBlockingRef.current) return
     ;(e.target as Element).setPointerCapture(e.pointerId)
     cancelInertia()
     completeIntroReveal()
@@ -431,6 +448,7 @@ export default function Canvas() {
   }, [cancelInertia, setInteracting, completeIntroReveal])
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (modalBlockingRef.current) return
     if (!pointers.current.has(e.pointerId)) return
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
 
@@ -475,6 +493,7 @@ export default function Canvas() {
   }, [assignments])
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    if (modalBlockingRef.current) return
     const wasSinglePointer = pointers.current.size === 1
     pointers.current.delete(e.pointerId)
     pinch.current = null
@@ -504,6 +523,11 @@ export default function Canvas() {
     if (!el) return
 
     const handleWheel = (e: WheelEvent) => {
+      // Let a blocking modal's own scroll behavior (if it has any) work
+      // normally instead of hijacking the wheel to zoom the canvas behind
+      // it — return before preventDefault so native scrolling isn't
+      // suppressed either.
+      if (modalBlockingRef.current) return
       e.preventDefault()
       completeIntroReveal()
       const rect = el.getBoundingClientRect()
@@ -876,6 +900,8 @@ export default function Canvas() {
             <img
               src={activeSpecialCard.card.cardImage}
               alt={activeSpecialCard.card.name}
+              draggable={false}
+              onDragStart={(e) => e.preventDefault()}
               className="h-full w-full object-cover"
             />
           </div>
