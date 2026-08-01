@@ -1,6 +1,13 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { motion } from 'framer-motion'
-import type { SpecialCard } from '../lib/specialCards'
+import { AnimatePresence, motion } from 'framer-motion'
+import { IMG_BASE, type SpecialCard } from '../lib/specialCards'
+
+// The post-video1 quiz's reaction images (see the overlay below) — one
+// "correct" gif per step (they're deliberately different images, not
+// reused) and a single "incorrect" image shared by both wrong answers.
+const QUIZ_CORRECT_1_IMG = `${IMG_BASE}/srii-quiz-correct-1.gif`
+const QUIZ_CORRECT_2_IMG = `${IMG_BASE}/srii-quiz-correct-2.gif`
+const QUIZ_INCORRECT_IMG = `${IMG_BASE}/srii-quiz-incorrect.jpg`
 
 interface SpecialCardModalProps {
   selected: SpecialCard | null
@@ -14,6 +21,10 @@ const BACKDROP_FADE = { duration: 0.3, ease: [0.16, 1, 0.3, 1] } as const
 // floaty spring.
 const FLIP_DURATION_MS = 650
 const FLIP_EASE = [0.65, 0, 0.35, 1] as const
+// How long the post-video1 quiz's angry/happy reaction shows before the
+// actual outcome (replay, reveal quiz2, or flip to video2) fires — long
+// enough to read as a genuine reaction, short enough not to feel laggy.
+const QUIZ_REACTION_MS = 900
 // video2 now has its own baked-in ~3s black-screen-with-audio intro (edited
 // into the file itself) — this just paces the decorative overlay bar to
 // match it. Purely cosmetic: the video is already playing underneath for
@@ -68,6 +79,15 @@ function MuteIcon({ muted }: { muted: boolean }) {
 
 export interface VideoFaceHandle {
   toggleMute: () => void
+  /** Pauses whichever video is currently mounted — used to freeze video1
+   *  the instant the post-video1 quiz overlay opens, so nothing keeps
+   *  playing behind it. */
+  pause: () => void
+  /** Restarts playback from the beginning (or, for video2, from just past
+   *  its baked-in intro — see handleReplay) — reused by both the video's
+   *  own end-of-playback Replay button and the quiz's "wrong answer"
+   *  outcomes, so there's only one implementation of "what replay means". */
+  replay: () => void
 }
 
 // Fetches a video fully into memory before playback ever starts — the only
@@ -139,6 +159,24 @@ interface VideoFaceProps {
    *  reveal the "Click here" flip prompt only in the last few seconds
    *  rather than for the whole video. */
   onNearEnd?: (nearEnd: boolean) => void
+  /** video1 only — mirrors currentTime continuously (cheap; the parent
+   *  stores it in a ref, not state) so that if the user backs out of
+   *  video2 later, video1 can be restored to right where it was left
+   *  rather than restarting from 0. */
+  onCurrentTimeChange?: (time: number) => void
+  /** video1 only — mirrors whether playback has genuinely reached the end
+   *  (the DOM `ended` event), alongside onCurrentTimeChange, so that state
+   *  can be restored too if the user backs out of video2 later. */
+  onEndedChange?: (ended: boolean) => void
+  /** video1 only, for the "Back from video2" case — mounts already seeked
+   *  to this time and paused, instead of autoplaying from 0, so returning
+   *  from video2 shows video1 exactly as it was left (paused near the end,
+   *  Click-here prompt already showing) rather than restarting it. */
+  resumeAt?: number
+  /** Paired with resumeAt — if the video had actually finished (DOM
+   *  `ended`) before flipping away, mounts with its own Replay overlay
+   *  already showing too, matching exactly how it looked right before. */
+  resumeEnded?: boolean
 }
 
 const NEAR_END_THRESHOLD_SECONDS = 3
@@ -162,7 +200,20 @@ const NEAR_END_THRESHOLD_SECONDS = 3
 // practice; contain is the safety net for the brief window before that
 // measurement lands, not the primary sizing mechanism.
 const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace(
-  { src, style, onAspectRatio, showIntroBar, progress, onMutedChange, onErrorChange, onNearEnd },
+  {
+    src,
+    style,
+    onAspectRatio,
+    showIntroBar,
+    progress,
+    onMutedChange,
+    onErrorChange,
+    onNearEnd,
+    onCurrentTimeChange,
+    onEndedChange,
+    resumeAt,
+    resumeEnded,
+  },
   ref,
 ) {
   const [isMuted, setIsMuted] = useState(false)
@@ -172,11 +223,33 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
   // back to the browser's native <video controls> bar, which would clash
   // with (and visually break) the custom toolbar.
   const [playBlocked, setPlayBlocked] = useState(false)
+  // True once playback reaches the end — shows a centered Replay button
+  // over the (now frozen-on-last-frame) video.
+  const [videoEnded, setVideoEnded] = useState(false)
   const [introBarVisible, setIntroBarVisible] = useState(!!showIntroBar)
   // The "fake" floor described on the `progress` prop above — climbs from
   // 0 to 1 over INTRO_BAR_MS regardless of real download state.
   const [introBarFakeFloor, setIntroBarFakeFloor] = useState(0)
   const videoRef = useRef<HTMLVideoElement>(null)
+
+  const handleReplay = () => {
+    const el = videoRef.current
+    if (!el) return
+    // video2 (showIntroBar) has its own baked-in ~3s black-screen-with-
+    // audio intro — already seen once by the time anyone reaches Replay,
+    // so skip straight past it back to the real content. This is just a
+    // seek within the already-downloaded blob already sitting in memory —
+    // no network request, so no risk of buffering.
+    el.currentTime = showIntroBar ? INTRO_BAR_MS / 1000 : 0
+    setVideoEnded(false)
+    onEndedChange?.(false)
+    // This runs directly from a click (either the video's own Replay
+    // button, or one of the post-video1 quiz's answer buttons), so it's a
+    // genuine user gesture — autoplay restrictions should never block it.
+    // Still falls back to the same custom Play button as the initial-load
+    // case rather than assuming that, on the off chance it somehow doesn't.
+    el.play().catch(() => setPlayBlocked(true))
+  }
 
   useImperativeHandle(ref, () => ({
     toggleMute: () => {
@@ -187,18 +260,49 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
         return next
       })
     },
+    pause: () => videoRef.current?.pause(),
+    replay: handleReplay,
   }))
 
   useEffect(() => {
     setIsMuted(false)
     setVideoError(null)
     setPlayBlocked(false)
+    setVideoEnded(false)
     onMutedChange?.(false)
     onErrorChange?.(false)
+    onEndedChange?.(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src])
 
+  // The "Back from video2" case — mounts paused at resumeAt instead of
+  // autoplaying from 0 (see the `autoPlay` prop below, which is disabled
+  // whenever resumeAt is set), and restores the Replay overlay too if
+  // resumeEnded says it had genuinely finished before the flip away.
+  // Waits for metadata if it isn't already available yet, since seeking
+  // before that is a no-op in most browsers.
   useEffect(() => {
+    if (resumeAt === undefined) return
+    const el = videoRef.current
+    if (!el) return
+    const applyResume = () => {
+      el.currentTime = resumeAt
+      el.pause()
+      if (resumeEnded) setVideoEnded(true)
+    }
+    if (el.readyState >= 1) {
+      applyResume()
+    } else {
+      el.addEventListener('loadedmetadata', applyResume, { once: true })
+      return () => el.removeEventListener('loadedmetadata', applyResume)
+    }
+  }, [resumeAt, resumeEnded, src])
+
+  useEffect(() => {
+    // Nothing to recover from here — resumeAt mounts intentionally paused,
+    // not autoplaying, so there's no "was autoplay blocked?" question to
+    // answer in the first place.
+    if (resumeAt !== undefined) return
     const timer = setTimeout(() => {
       const el = videoRef.current
       // readyState >= 2 (HAVE_CURRENT_DATA) rules out "still loading" —
@@ -219,7 +323,7 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, 700)
     return () => clearTimeout(timer)
-  }, [src])
+  }, [src, resumeAt])
 
   useEffect(() => {
     if (!showIntroBar) return
@@ -265,10 +369,15 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
             if (v.videoWidth && v.videoHeight) onAspectRatio?.(v.videoWidth / v.videoHeight)
           }}
           onTimeUpdate={(e) => {
-            if (!onNearEnd) return
             const v = e.currentTarget
+            onCurrentTimeChange?.(v.currentTime)
+            if (!onNearEnd) return
             if (!Number.isFinite(v.duration)) return
             onNearEnd(v.duration - v.currentTime <= NEAR_END_THRESHOLD_SECONDS)
+          }}
+          onEnded={() => {
+            setVideoEnded(true)
+            onEndedChange?.(true)
           }}
           onError={(e) => {
             const err = e.currentTarget.error
@@ -283,7 +392,7 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
             onErrorChange?.(true)
           }}
           src={src}
-          autoPlay
+          autoPlay={resumeAt === undefined}
           muted={isMuted}
           playsInline
           className="absolute inset-0 h-full w-full object-contain"
@@ -320,6 +429,21 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
           >
             <svg viewBox="0 0 24 24" className="h-6 w-6 translate-x-0.5" fill="currentColor">
               <path d="M8 5v14l11-7z" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {videoEnded && !videoError && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+          <button
+            type="button"
+            onClick={handleReplay}
+            aria-label="Replay"
+            className="flex h-14 w-14 items-center justify-center rounded-full bg-white/15 text-white backdrop-blur-md transition-colors hover:bg-white/25"
+          >
+            <svg viewBox="0 0 24 24" className="h-7 w-7" fill="currentColor">
+              <path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z" />
             </svg>
           </button>
         </div>
@@ -375,6 +499,36 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   // here" flip prompt so it only appears near the end, not for the whole
   // video (see the NEAR_END_THRESHOLD_SECONDS wiring on VideoFace).
   const [video1NearEnd, setVideo1NearEnd] = useState(false)
+  // A little joke gate between "Click here" and actually reaching video2 —
+  // 'quiz1' asks the user to pick a word (wrong answer replays video1),
+  // 'quiz2' is the fake-out follow-up (one option replays again, the other
+  // finally flips to video2). video1 is explicitly paused for the whole
+  // stretch this is up (see handleStartQuiz/the overlay below) so nothing
+  // plays behind it.
+  const [quizStage, setQuizStage] = useState<'none' | 'quiz1' | 'quiz2'>('none')
+  // Brief animated feedback shown in place of the question/buttons right
+  // after an answer is picked — 'wrong' (angry) for samosa/Dikha bc,
+  // 'right' (happy) for vadapav/Ruk Tu — before the actual outcome
+  // (replay, advance to quiz2, or flip to video2) happens.
+  const [quizReaction, setQuizReaction] = useState<'none' | 'wrong' | 'right'>('none')
+  const quizReactionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Mirrors video1's currentTime continuously (see VideoFace's
+  // onCurrentTimeChange) — a ref, not state, since it updates ~4x/second
+  // and is only ever read at the moment of backing out of video2, never
+  // rendered directly.
+  const video1LastTimeRef = useRef(0)
+  // Mirrors whether video1 had genuinely reached its end (see
+  // onEndedChange) — same ref-not-state rationale as video1LastTimeRef.
+  const video1WasEndedRef = useRef(false)
+  // Set right before reverse-flipping back to video1 from video2 (see
+  // handleBackFromVideo2) — makes that video1 face mount already seeked to
+  // this time and paused, instead of autoplaying from 0, so Back genuinely
+  // restores "how it was" rather than restarting video1. undefined for
+  // every other path (a fresh "Watch Now", a normal Back to hero, etc.).
+  const [video1ResumeAt, setVideo1ResumeAt] = useState<number | undefined>(undefined)
+  // Paired with video1ResumeAt — restores the Replay overlay too if video1
+  // had actually finished before flipping away to video2.
+  const [video1ResumeEnded, setVideo1ResumeEnded] = useState(false)
   const activeVideoFaceRef = useRef<VideoFaceHandle>(null)
   const flipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const video1BlobUrlRef = useRef<string | null>(null)
@@ -411,22 +565,35 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
     setIsMuted(false)
     setHasVideoError(false)
     setVideo1NearEnd(false)
+    setQuizStage('none')
+    setQuizReaction('none')
+    setVideo1ResumeAt(undefined)
+    setVideo1ResumeEnded(false)
     revokeVideo1Blob()
     revokeVideo2Blob()
     if (flipTimerRef.current) {
       clearTimeout(flipTimerRef.current)
       flipTimerRef.current = null
     }
+    if (quizReactionTimerRef.current) {
+      clearTimeout(quizReactionTimerRef.current)
+      quizReactionTimerRef.current = null
+    }
   }
 
-  // Lighter reset for the Back button — returns to the hero screen but
-  // deliberately leaves video1LoadState/video1Src/video2LoadState/video2Src
-  // untouched, so a preload that already finished (or is still in
-  // progress) isn't thrown away and re-fetched from scratch just because
-  // the user stepped back. Pressing "Watch Now" again reuses it instantly.
-  const handleBack = () => {
+  // Full "step all the way back to hero" reset — used when Back is
+  // pressed from video1/video1-loading. Deliberately leaves
+  // video1LoadState/video1Src/video2LoadState/video2Src untouched, so a
+  // preload that already finished (or is still in progress) isn't thrown
+  // away and re-fetched from scratch just because the user stepped back.
+  // Pressing "Watch Now" again reuses it instantly.
+  const handleBackToHero = () => {
     setStage('hero')
     setFlipped(false)
+    setQuizStage('none')
+    setQuizReaction('none')
+    setVideo1ResumeAt(undefined)
+    setVideo1ResumeEnded(false)
     setVideo1Ratio(null)
     setVideo2Ratio(null)
     setIsMuted(false)
@@ -436,6 +603,39 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
       clearTimeout(flipTimerRef.current)
       flipTimerRef.current = null
     }
+    if (quizReactionTimerRef.current) {
+      clearTimeout(quizReactionTimerRef.current)
+      quizReactionTimerRef.current = null
+    }
+  }
+
+  // Reverse of handleFlipToVideo2 — pauses video2, animates the flip back
+  // (180deg -> 0), and swaps which face is mounted at the rotation's
+  // midpoint just like the forward flip does, so it reads as a genuine
+  // "flip back" rather than an abrupt cut. video1 resumes exactly where it
+  // was left off (paused, at the same currentTime, Click-here prompt
+  // already showing since video1NearEnd is deliberately left untouched
+  // here) via video1ResumeAt/video1LastTimeRef, rather than restarting
+  // from 0 the way a full Back-to-hero would.
+  const handleBackFromVideo2 = () => {
+    activeVideoFaceRef.current?.pause()
+    setQuizStage('none')
+    setQuizReaction('none')
+    setVideo1ResumeAt(video1LastTimeRef.current)
+    setVideo1ResumeEnded(video1WasEndedRef.current)
+    setFlipped(false)
+    flipTimerRef.current = setTimeout(() => setStage('video1'), FLIP_DURATION_MS / 2)
+  }
+
+  // The toolbar's Back button — from video2 this reverse-flips to video1
+  // right where it was left (see handleBackFromVideo2); from anywhere else
+  // it's a full step back to the hero screen.
+  const handleBack = () => {
+    if (stage === 'video2') {
+      handleBackFromVideo2()
+      return
+    }
+    handleBackToHero()
   }
 
   useEffect(() => {
@@ -446,6 +646,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   useEffect(() => {
     return () => {
       if (flipTimerRef.current) clearTimeout(flipTimerRef.current)
+      if (quizReactionTimerRef.current) clearTimeout(quizReactionTimerRef.current)
       revokeVideo1Blob()
       revokeVideo2Blob()
     }
@@ -531,6 +732,22 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
     }
   }, [video1LoadState, selected])
 
+  // Preloads the quiz's three reaction images the same moment video2 starts
+  // (once video1LoadState is 'ready') — small enough (well under 200KB
+  // combined) that they don't meaningfully compete with video2's own
+  // download, but without this they'd otherwise only start fetching the
+  // instant a reaction needs to show, which reads as a visible load delay
+  // right when it should feel instant. Plain Image() objects are enough —
+  // once loaded the browser's own HTTP cache serves the <img> in the quiz
+  // overlay for free, no extra plumbing needed.
+  useEffect(() => {
+    if (video1LoadState !== 'ready' || selected?.id !== 'srii') return
+    ;[QUIZ_CORRECT_1_IMG, QUIZ_CORRECT_2_IMG, QUIZ_INCORRECT_IMG].forEach((url) => {
+      const img = new Image()
+      img.src = url
+    })
+  }, [video1LoadState, selected])
+
   const handleFlipToVideo2 = () => {
     setFlipped(true)
     // Swap which video is mounted at the halfway point of the rotation —
@@ -538,6 +755,53 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
     // viewer (and so already invisible), so unmounting video1 and mounting
     // video2 there is imperceptible rather than an early, visible pop.
     flipTimerRef.current = setTimeout(() => setStage('video2'), FLIP_DURATION_MS / 2)
+  }
+
+  // "Click here" no longer flips straight to video2 — it pauses video1 and
+  // opens the little word-quiz gate first (see the overlay below). video1
+  // stays paused for the entire quiz; only the outcomes below (fired after
+  // their reaction animation, see playQuizReaction) ever touch playback
+  // again.
+  const handleStartQuiz = () => {
+    activeVideoFaceRef.current?.pause()
+    setQuizStage('quiz1')
+  }
+
+  // Shows the angry/happy reaction in place of the question+buttons for a
+  // beat, THEN runs the real outcome — so picking an answer always reads
+  // as "here's what that choice earned you" rather than an instant jump.
+  const playQuizReaction = (kind: 'wrong' | 'right', after: () => void) => {
+    setQuizReaction(kind)
+    quizReactionTimerRef.current = setTimeout(() => {
+      setQuizReaction('none')
+      after()
+    }, QUIZ_REACTION_MS)
+  }
+
+  // "Wrong" outcomes from either quiz step (samosa / Dikha bc) — angry
+  // reaction, then dismiss the overlay and replay video1 from the start.
+  const handleQuizWrong = () => {
+    playQuizReaction('wrong', () => {
+      setQuizStage('none')
+      activeVideoFaceRef.current?.replay()
+    })
+  }
+
+  // quiz1's "right" pick (vadapav) — happy reaction, then reveal quiz2
+  // rather than actually finishing anything yet (the real fake-out).
+  const handleQuizCorrectStep = () => {
+    playQuizReaction('right', () => setQuizStage('quiz2'))
+  }
+
+  // The one true "right" path (quiz2's "Ruk Tu") — happy reaction, then
+  // dismiss the overlay and finally do the real flip to video2. video1 is
+  // left paused throughout; it's about to be unmounted at the flip's
+  // midpoint anyway, so there's no need to resume it first.
+  const handleQuizAdvance = () => {
+    playQuizReaction('right', () => {
+      setQuizStage('none')
+      handleFlipToVideo2()
+    })
   }
 
   useEffect(() => {
@@ -563,6 +827,14 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   // video2 is portrait).
   const activeAspectRatio =
     (stage === 'video2' ? video2Ratio ?? video1Ratio : video1Ratio) ?? DEFAULT_ASPECT_RATIO
+  // Shared by the quiz overlay's answer buttons below — same treatment as
+  // "Watch Now", since these are the primary choice a person's making in
+  // that moment, not a secondary hint like the de-emphasized Jkk prompt.
+  const quizButtonClass = `rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+    isSrii
+      ? 'bg-linear-to-r from-pink-400 to-rose-400 text-white hover:from-pink-300 hover:to-rose-300'
+      : 'bg-white text-black hover:bg-white/90'
+  }`
 
   return (
     <div
@@ -747,9 +1019,123 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                       onMutedChange={setIsMuted}
                       onErrorChange={setHasVideoError}
                       onNearEnd={setVideo1NearEnd}
+                      onCurrentTimeChange={(t) => {
+                        video1LastTimeRef.current = t
+                      }}
+                      onEndedChange={(ended) => {
+                        video1WasEndedRef.current = ended
+                      }}
+                      resumeAt={video1ResumeAt}
+                      resumeEnded={video1ResumeEnded}
                     />
                   )}
                 </motion.div>
+
+                {/* A little joke gate between "Click here" and video2 —
+                    video1 is explicitly paused (see handleStartQuiz) for
+                    as long as this is up, and it fully covers the frozen
+                    frame besides, so nothing plays or is even visible
+                    behind it. Sits above the 3D-rotating video, not inside
+                    it, so it's unaffected by the flip transform. */}
+                <AnimatePresence>
+                  {stage === 'video1' && quizStage !== 'none' && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="absolute inset-0 z-20 flex items-center justify-center bg-black/55 px-6 backdrop-blur-md"
+                    >
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.85, y: 8 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        transition={{ type: 'spring', stiffness: 380, damping: 26 }}
+                        className={`w-full max-w-65 rounded-3xl px-6 py-7 text-center ring-1 backdrop-blur-xl transition-colors duration-200 ${
+                          quizReaction === 'wrong'
+                            ? 'bg-red-500/10 ring-red-400/30'
+                            : quizReaction === 'right'
+                              ? 'bg-pink-400/10 ring-pink-300/35'
+                              : 'bg-white/10 ring-pink-300/20'
+                        }`}
+                      >
+                        <AnimatePresence mode="wait">
+                          {quizReaction === 'wrong' ? (
+                            <motion.div
+                              key="wrong"
+                              initial={{ opacity: 0, scale: 0.7 }}
+                              animate={{ opacity: 1, scale: 1, x: [0, -10, 10, -8, 8, -4, 4, 0] }}
+                              exit={{ opacity: 0, scale: 0.8 }}
+                              transition={{ duration: 0.45, ease: 'easeOut' }}
+                            >
+                              <img
+                                src={QUIZ_INCORRECT_IMG}
+                                alt=""
+                                draggable={false}
+                                className="max-h-48 w-auto rounded-2xl object-contain"
+                              />
+                            </motion.div>
+                          ) : quizReaction === 'right' ? (
+                            <motion.div
+                              key="right"
+                              initial={{ opacity: 0, scale: 0.6 }}
+                              animate={{ opacity: 1, scale: [0.6, 1.2, 0.95, 1.05, 1], rotate: [0, -8, 8, -4, 0] }}
+                              exit={{ opacity: 0, scale: 0.8 }}
+                              transition={{ duration: 0.5, ease: 'easeOut' }}
+                            >
+                              <img
+                                src={quizStage === 'quiz1' ? QUIZ_CORRECT_1_IMG : QUIZ_CORRECT_2_IMG}
+                                alt=""
+                                draggable={false}
+                                className="max-h-48 w-auto rounded-2xl object-contain"
+                              />
+                            </motion.div>
+                          ) : quizStage === 'quiz1' ? (
+                            <motion.div
+                              key="quiz1"
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                              transition={{ duration: 0.15 }}
+                              className="flex flex-col items-center gap-4"
+                            >
+                              <span className="text-3xl">🤔</span>
+                              <p className="text-sm font-semibold text-white">Select the correct word</p>
+                              <div className="flex gap-3">
+                                <button type="button" onClick={handleQuizCorrectStep} className={quizButtonClass}>
+                                  vadapav
+                                </button>
+                                <button type="button" onClick={handleQuizWrong} className={quizButtonClass}>
+                                  samosa
+                                </button>
+                              </div>
+                            </motion.div>
+                          ) : (
+                            <motion.div
+                              key="quiz2"
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                              transition={{ duration: 0.15 }}
+                              className="flex flex-col items-center gap-4"
+                            >
+                              <span className="text-3xl">😏</span>
+                              <p className="text-sm font-semibold text-white">Hattttttt!! Nahi dikhaunga</p>
+                              <div className="flex gap-3">
+                                <button type="button" onClick={handleQuizWrong} className={quizButtonClass}>
+                                  Dikha bc
+                                </button>
+                                <button type="button" onClick={handleQuizAdvance} className={quizButtonClass}>
+                                  Ruk Tu
+                                </button>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </motion.div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             )}
 
@@ -787,17 +1173,13 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                       transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
                       className="mt-3 flex items-center justify-end gap-2"
                     >
-                      <span className="text-xs text-white/50">Jkk, here's a short edit</span>
+                      <span className="text-xs text-white/50">Jkk, heres a short edit</span>
                       <button
                         type="button"
-                        onClick={handleFlipToVideo2}
-                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-                          isSrii
-                            ? 'bg-linear-to-r from-pink-400 to-rose-400 text-white hover:from-pink-300 hover:to-rose-300'
-                            : 'bg-white text-black hover:bg-white/90'
-                        }`}
+                        onClick={handleStartQuiz}
+                        className="rounded-full bg-white/10 px-3 py-1.5 text-xs text-white/70 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white/90"
                       >
-                        › Click here
+                        Click here
                       </button>
                     </motion.div>
                   )}

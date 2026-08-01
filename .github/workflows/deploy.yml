@@ -27,7 +27,7 @@ jobs:
           path: private-assets
       - run: |
           mkdir -p public/img
-          cp private-assets/*.png private-assets/*.jpeg private-assets/*.mp4 public/img/ 2>/dev/null || true
+          cp private-assets/*.png private-assets/*.jpeg private-assets/*.jpg private-assets/*.gif private-assets/*.mp4 public/img/ 2>/dev/null || true
       - uses: actions/setup-node@v4
         with:
           node-version: 20
