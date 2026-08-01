@@ -70,6 +70,47 @@ export interface VideoFaceHandle {
   toggleMute: () => void
 }
 
+// Fetches a video fully into memory before playback ever starts — the only
+// way to actually guarantee zero mid-playback buffering, since the browser
+// can't stall on network I/O for bytes that are already sitting in a Blob.
+// Reports real byte-level progress via onProgress (0-1) when the server
+// sends a Content-Length header (static hosts like GitHub Pages / Vite dev
+// always do for these files); falls back to a single jump-to-1 report if
+// it's ever missing rather than leaving the caller's progress bar stuck.
+async function fetchVideoWithProgress(
+  url: string,
+  signal: AbortSignal,
+  onProgress: (fraction: number) => void,
+): Promise<Blob> {
+  const response = await fetch(url, { signal })
+  if (!response.ok) throw new Error(`Failed to fetch video: HTTP ${response.status}`)
+
+  const total = Number(response.headers.get('content-length') ?? 0)
+  if (!response.body || !total) {
+    const blob = await response.blob()
+    onProgress(1)
+    return blob
+  }
+
+  // Tap byte counts as they pass through a TransformStream, but let the
+  // browser's own Response.blob() actually assemble the final Blob from
+  // the (otherwise untouched) stream — manually reassembling one ourselves
+  // from an array of reader.read() chunks produces a byte-perfect-sized
+  // but genuinely unplayable Blob in Firefox specifically (readyState
+  // stuck at 0 forever, confirmed via isolated testing); Response.blob()
+  // doesn't have that problem.
+  let received = 0
+  const progressStream = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      received += chunk.length
+      onProgress(received / total)
+      controller.enqueue(chunk)
+    },
+  })
+  const trackedResponse = new Response(response.body.pipeThrough(progressStream))
+  return trackedResponse.blob()
+}
+
 interface VideoFaceProps {
   src?: string
   /** Extra style merged onto the face root — used to counter-rotate the back face. */
@@ -238,18 +279,26 @@ const VideoFace = forwardRef<VideoFaceHandle, VideoFaceProps>(function VideoFace
 })
 
 export default function SpecialCardModal({ selected, onClose }: SpecialCardModalProps) {
-  const [stage, setStage] = useState<'hero' | 'video1' | 'video2'>('hero')
+  const [stage, setStage] = useState<'hero' | 'video1-loading' | 'video1' | 'video2'>('hero')
   // Drives the 3D rotation independently of `stage` so the video content
   // can swap at the flip's rotation midpoint (see handleFlipToVideo2)
   // instead of instantly at click-time, which would show the new title
   // over the old, still-mid-flip content.
   const [flipped, setFlipped] = useState(false)
-  // The fully-preloaded video2, as a blob URL — starts downloading as soon
-  // as video1 does (see the effect below), so by the time someone actually
-  // clicks through it's usually already sitting in memory. Falls back to
-  // the plain src (ordinary browser streaming) if the fetch hasn't
-  // finished yet or failed outright — the flip itself is never blocked
-  // waiting on this.
+  // video1, fully preloaded into memory before playback starts (see the
+  // 'video1-loading' effect below) — same rationale as video2's blob: a
+  // <video> playing from a Blob URL can never stall on the network, since
+  // every byte is already local. video1Progress (0-1) drives the real,
+  // byte-accurate loading bar shown during that stage.
+  const [video1Src, setVideo1Src] = useState<string | undefined>(undefined)
+  const [video1Progress, setVideo1Progress] = useState(0)
+  // The fully-preloaded video2, as a blob URL. Only starts downloading once
+  // video1 has FULLY finished loading and started playing (stage becomes
+  // 'video1' only after that point — see the loading effect) rather than
+  // concurrently with it, so the two downloads never compete for bandwidth
+  // and make each other buffer. Falls back to the plain src (ordinary
+  // browser streaming) if the fetch hasn't finished yet or failed outright
+  // — the flip itself is never blocked waiting on this.
   const [video2Src, setVideo2Src] = useState<string | undefined>(undefined)
   const [video1Ratio, setVideo1Ratio] = useState<number | null>(null)
   const [video2Ratio, setVideo2Ratio] = useState<number | null>(null)
@@ -265,8 +314,16 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   const [video1NearEnd, setVideo1NearEnd] = useState(false)
   const activeVideoFaceRef = useRef<VideoFaceHandle>(null)
   const flipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const video1BlobUrlRef = useRef<string | null>(null)
   const video2BlobUrlRef = useRef<string | null>(null)
   const open = selected !== null
+
+  const revokeVideo1Blob = () => {
+    if (video1BlobUrlRef.current) {
+      URL.revokeObjectURL(video1BlobUrlRef.current)
+      video1BlobUrlRef.current = null
+    }
+  }
 
   const revokeVideo2Blob = () => {
     if (video2BlobUrlRef.current) {
@@ -278,12 +335,15 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   const resetVideoState = () => {
     setStage('hero')
     setFlipped(false)
+    setVideo1Src(undefined)
+    setVideo1Progress(0)
     setVideo2Src(undefined)
     setVideo1Ratio(null)
     setVideo2Ratio(null)
     setIsMuted(false)
     setHasVideoError(false)
     setVideo1NearEnd(false)
+    revokeVideo1Blob()
     revokeVideo2Blob()
     if (flipTimerRef.current) {
       clearTimeout(flipTimerRef.current)
@@ -298,14 +358,51 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   useEffect(() => {
     return () => {
       if (flipTimerRef.current) clearTimeout(flipTimerRef.current)
+      revokeVideo1Blob()
       revokeVideo2Blob()
     }
   }, [])
 
-  // Preloads video2 entirely in the background the moment video1 starts —
-  // not when "Click here" is pressed — so it's already (or nearly) ready
-  // by the time anyone actually gets there. Falls back to the plain src if
-  // the fetch fails; either way this never blocks the flip itself.
+  // Fully preloads video1 into memory before it ever starts playing — see
+  // fetchVideoWithProgress above for why this is the only real guarantee
+  // against mid-playback buffering. video1Progress drives the loading bar
+  // rendered for this stage below. Falls back to the plain src (ordinary
+  // streaming) if the fetch fails outright, rather than leaving the modal
+  // stuck on a loading bar forever.
+  useEffect(() => {
+    if (stage !== 'video1-loading' || !selected?.videoSrc) return
+    let cancelled = false
+    const controller = new AbortController()
+    setVideo1Progress(0)
+
+    fetchVideoWithProgress(selected.videoSrc, controller.signal, (fraction) => {
+      if (!cancelled) setVideo1Progress(fraction)
+    })
+      .then((blob) => {
+        if (cancelled) return
+        const url = URL.createObjectURL(blob)
+        video1BlobUrlRef.current = url
+        setVideo1Src(url)
+        setStage('video1')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setVideo1Src(selected.videoSrc)
+        setStage('video1')
+      })
+
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [stage, selected])
+
+  // Preloads video2 entirely in the background only once video1 has fully
+  // loaded and started playing (stage only reaches 'video1' after that
+  // point — see the effect above), not concurrently with video1's own
+  // download, so the two fetches never compete for bandwidth and cause
+  // each other to buffer. Falls back to the plain src if the fetch fails;
+  // either way this never blocks the flip itself.
   useEffect(() => {
     if (stage !== 'video1' || !selected?.secondVideoSrc) return
     let cancelled = false
@@ -439,7 +536,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                   Back
                 </button>
                 <div className="flex items-center gap-2">
-                  {!hasVideoError && (
+                  {stage !== 'video1-loading' && !hasVideoError && (
                     <button
                       type="button"
                       onClick={() => activeVideoFaceRef.current?.toggleMute()}
@@ -471,6 +568,23 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                     isSrii ? 'from-[#241620]' : 'from-[#141418]'
                   }`}
                 />
+              </div>
+            ) : stage === 'video1-loading' ? (
+              // A real, byte-accurate loading bar (see fetchVideoWithProgress)
+              // rather than a decorative timer — it only reaches full once
+              // video1 has actually finished downloading, which is also
+              // exactly the moment playback is guaranteed never to buffer.
+              <div
+                style={{ aspectRatio: DEFAULT_ASPECT_RATIO }}
+                className="relative flex w-full max-h-[70vh] flex-col items-center justify-center gap-3 bg-black"
+              >
+                <div className="h-0.75 w-40 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-linear-to-r from-pink-400 to-rose-400 transition-[width] duration-150 ease-out"
+                    style={{ width: `${Math.round(video1Progress * 100)}%` }}
+                  />
+                </div>
+                <span className="text-xs text-white/50">Loading… {Math.round(video1Progress * 100)}%</span>
               </div>
             ) : (
               // Sized to the currently-active video's real aspect ratio
@@ -517,7 +631,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                   ) : (
                     <VideoFace
                       ref={activeVideoFaceRef}
-                      src={selected.videoSrc}
+                      src={video1Src ?? selected.videoSrc}
                       onAspectRatio={setVideo1Ratio}
                       onMutedChange={setIsMuted}
                       onErrorChange={setHasVideoError}
@@ -588,7 +702,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
               {stage === 'hero' && selected.videoSrc && (
                 <button
                   type="button"
-                  onClick={() => setStage('video1')}
+                  onClick={() => setStage('video1-loading')}
                   className={`mt-4 inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
                     isSrii
                       ? 'bg-linear-to-r from-pink-400 to-rose-400 text-white hover:from-pink-300 hover:to-rose-300'
