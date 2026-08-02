@@ -298,6 +298,35 @@ body,
   60%, 100% { transform: translate3d(130%, 0, 0); }
 }
 
+/* Spider-Man rig: a pendulum swing around the point where the web attaches
+   (top center). The pull-and-release drag physics (see SpiderBuddy.tsx) are
+   applied as inline transforms on the rope/character *inside* this rig, so
+   the two layer together — grabbing him mid-swing doesn't fight this.
+   Delayed 1.3s (matching the rope-grow entrance in SpiderBuddy.tsx) so the
+   rig doesn't rotate while the web is still growing — that combined motion
+   read as jittery rather than a clean small-to-big grow. A plain
+   animation-delay rather than a JS timer/class toggle: during the delay the
+   element simply has no animation applied (no transform), and the keyframes
+   below start/end at rotate(0deg) to exactly match that — so the handoff
+   into the sway once it begins has no pop. */
+.spider-web-rig {
+  transform-origin: top center;
+  animation: spider-web-sway 3.6s ease-in-out 1.3s infinite;
+  will-change: transform;
+}
+@keyframes spider-web-sway {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(6deg); }
+  50% { transform: rotate(-6deg); }
+  75% { transform: rotate(4deg); }
+}
+
+/* The entrance itself (thread growing down from the card's top edge, body
+   fading in at its tip) is driven imperatively in SpiderBuddy.tsx via the
+   Web Animations API, not CSS keyframes here — it needs the exact ROPE_H
+   pixel value computed from the source image, and needs to skip cleanly
+   under prefers-reduced-motion without a duplicate media-query block. */
+
 @media (prefers-reduced-motion: reduce) {
   .space-star-layer,
   .space-shooting-star,
@@ -317,7 +346,8 @@ body,
   .srii-glow,
   .srii-aurora-blob,
   .srii-kenburns,
-  .srii-shimmer::after {
+  .srii-shimmer::after,
+  .spider-web-rig {
     animation: none !important;
   }
 

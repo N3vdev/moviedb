@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Claude Buddy — Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <h1>Claude Buddy</h1>
+  <p class="lead">A pixel-art companion that reacts to your claude.ai usage. Everything below is stored only on this device.</p>
+
+  <section id="characterSection">
+    <h2 class="section-title">Character</h2>
+    <div class="character-grid" id="characterGrid"></div>
+    <p class="character-note" id="characterNote"></p>
+  </section>
+
+  <section>
+    <label class="field">
+      <input type="checkbox" id="enabled" />
+      <span>Show the buddy</span>
+    </label>
+
+    <div class="field group">
+      <span class="group-label">Where should it appear?</span>
+      <label class="radio">
+        <input type="radio" name="scope" value="all" />
+        <span>Every website (default — matches "always on top of the browser")</span>
+      </label>
+      <label class="radio">
+        <input type="radio" name="scope" value="claude-only" />
+        <span>Only on claude.ai</span>
+      </label>
+    </div>
+
+    <label class="field">
+      <span>Opacity</span>
+      <input type="range" id="opacity" min="0.3" max="1" step="0.05" />
+    </label>
+
+    <button id="resetPosition" class="btn ghost">Reset position to bottom-right</button>
+  </section>
+
+  <section id="usageSection">
+    <h2 class="section-title">Usage</h2>
+    <div class="usage-readout" id="usageReadout">Loading…</div>
+    <button id="refreshUsage" class="btn ghost">Refresh now</button>
+  </section>
+
+  <section class="how">
+    <h2>How this works</h2>
+    <p>
+      Usage is fetched directly from claude.ai's own usage API
+      (<code>claude.ai/api/organizations/&lt;org&gt;/usage</code>) using your
+      existing claude.ai session — the same data its own
+      <a href="https://claude.ai/new#settings/usage" target="_blank" rel="noopener">Settings → Usage</a>
+      page shows. No manual configuration, no local guessing. It refreshes
+      automatically every 5 minutes, or on demand with the button above or
+      in the popup. Nothing is ever sent anywhere else.
+    </p>
+  </section>
+
+  <script src="../shared/mascot.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

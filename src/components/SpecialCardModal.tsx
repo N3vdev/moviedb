@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { IMG_BASE, type SpecialCard } from '../lib/specialCards'
+import SpiderBuddy from './SpiderBuddy'
 
 // The post-video1 quiz's reaction images (see the overlay below) — one
 // "correct" gif per step (they're deliberately different images, not
@@ -559,8 +560,16 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   const [hasVideoError, setHasVideoError] = useState(false)
   // True once video1 is within its last few seconds — gates the "Click
   // here" flip prompt so it only appears near the end, not for the whole
-  // video (see the NEAR_END_THRESHOLD_SECONDS wiring on VideoFace).
+  // video (see the NEAR_END_THRESHOLD_SECONDS wiring on VideoFace). Also
+  // gates the Srii card's Spider-Man mascot (see SpiderBuddy below), so he
+  // spawns and descends during that same final stretch instead of waiting
+  // for the video to fully end.
   const [video1NearEnd, setVideo1NearEnd] = useState(false)
+  // True once SpiderBuddy's web has actually broken (see its onBroken
+  // prop) — hides the "pull spidey for a surprise edit" hint once he's
+  // fallen away and gone, since it'd otherwise keep pointing at an empty
+  // corner for the rest of the session (video1NearEnd itself stays true).
+  const [spideyGone, setSpideyGone] = useState(false)
   // A little joke gate between "Click here" and actually reaching video2 —
   // 'quiz1' asks the user to pick a word (wrong answer replays video1),
   // 'quiz2' is the fake-out follow-up (one option replays again, the other
@@ -627,6 +636,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
     setIsMuted(false)
     setHasVideoError(false)
     setVideo1NearEnd(false)
+    setSpideyGone(false)
     setQuizStage('none')
     setQuizReaction('none')
     setVideo1ResumeAt(undefined)
@@ -661,6 +671,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
     setIsMuted(false)
     setHasVideoError(false)
     setVideo1NearEnd(false)
+    setSpideyGone(false)
     if (flipTimerRef.current) {
       clearTimeout(flipTimerRef.current)
       flipTimerRef.current = null
@@ -819,12 +830,17 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
     flipTimerRef.current = setTimeout(() => setStage('video2'), FLIP_DURATION_MS / 2)
   }
 
-  // "Click here" no longer flips straight to video2 — it pauses video1 and
+  // Used to be a "Click here" button; now it's SpiderBuddy's onActivate,
+  // fired only once a drag clears its pull-hard-enough threshold (see
+  // ACTIVATE_THRESHOLD in SpiderBuddy.tsx). Either way it pauses video1 and
   // opens the little word-quiz gate first (see the overlay below). video1
   // stays paused for the entire quiz; only the outcomes below (fired after
   // their reaction animation, see playQuizReaction) ever touch playback
-  // again.
+  // again. Guarded against re-entry — SpiderBuddy stays mounted (and
+  // draggable) through the whole quiz, so a second hard pull mid-quiz would
+  // otherwise just re-run this pointlessly.
   const handleStartQuiz = () => {
+    if (quizStage !== 'none') return
     activeVideoFaceRef.current?.pause()
     setQuizStage('quiz1')
   }
@@ -900,8 +916,15 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
 
   return (
     <div
-      className={`fixed inset-0 z-40 flex items-center justify-center p-4 ${open ? '' : 'pointer-events-none'}`}
-      onClick={onClose}
+      className={`fixed inset-0 z-40 flex select-none items-center justify-center p-4 ${open ? '' : 'pointer-events-none'}`}
+      // Every other special card closes on a backdrop click, but Srii's
+      // pull-to-break-the-web gesture (see SpiderBuddy) means a hard,
+      // fast drag routinely ends with the cursor well outside the card —
+      // if backdrop clicks still closed it, a big committed pull would
+      // constantly self-sabotage by closing the whole modal right as it
+      // paid off. So backdrop-click-to-close is disabled specifically for
+      // this card; Back/Close buttons still work as normal.
+      onClick={isSrii ? undefined : onClose}
       aria-hidden={!open}
     >
       <motion.div
@@ -928,6 +951,22 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
           isSrii ? 'max-w-sm sm:max-w-md' : 'max-w-xl sm:max-w-2xl'
         }`}
       >
+        {/* Only shows up on the Srii card, spawning during video1's final
+            few seconds (same video1NearEnd signal that used to gate a
+            "Click here" button — see NEAR_END_THRESHOLD_SECONDS) rather than
+            waiting for it to fully end. Descends from just above the card on
+            mount, then keeps swinging. IS the "Click here" button now — see
+            handleStartQuiz/onActivate — except pulling him hard enough to
+            trigger it is deliberately not easy (see ACTIVATE_THRESHOLD in
+            SpiderBuddy.tsx). A sibling of the max-h/overflow wrapper below
+            (not nested inside it) so it isn't clipped by that wrapper's own
+            overflow-y-auto/overflow-hidden, while still riding along with
+            this card's own scale/opacity via `position: absolute` against
+            this `relative` motion.div. */}
+        {isSrii && video1NearEnd && (
+          <SpiderBuddy onActivate={handleStartQuiz} onBroken={() => setSpideyGone(true)} />
+        )}
+
         {/* max-h/overflow live on this wrapper (not the rounded card inside)
             so a scrollbar — on the rare device that shows one — rides the
             card's outer edge rather than cutting a straight line through
@@ -1365,29 +1404,32 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
               )}
 
               {stage === 'video1' && selected.videoDescription && (
-                <>
-                  <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-white/60">
-                    {selected.videoDescription}
-                  </p>
-                  {selected.secondVideoSrc && video1NearEnd && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                      className="mt-3 flex items-center justify-end gap-2"
-                    >
-                      <span className="text-xs text-white/50">Jkk, heres a short edit</span>
-                      <button
-                        type="button"
-                        onClick={handleStartQuiz}
-                        className="rounded-full bg-white/10 px-3 py-1.5 text-xs text-white/70 backdrop-blur-md transition-colors hover:bg-white/15 hover:text-white/90"
-                      >
-                        Click here
-                      </button>
-                    </motion.div>
-                  )}
-                </>
+                <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-white/60">
+                  {selected.videoDescription}
+                </p>
               )}
+
+              {/* The old "Jkk, heres a short edit" / Click here prompt's
+                  replacement now that SpiderBuddy itself is the trigger —
+                  same fade-in treatment, same video1NearEnd gate, just a
+                  hint instead of a button. Fades back out once he's actually
+                  broken free and fallen away (spideyGone, via SpiderBuddy's
+                  onBroken) — video1NearEnd itself stays true for the rest of
+                  the session, so without this the hint would keep pointing
+                  at an empty corner. */}
+              <AnimatePresence>
+                {selected.secondVideoSrc && video1NearEnd && !spideyGone && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                    className="mt-3 flex items-center justify-end"
+                  >
+                    <span className="text-xs text-white/50">pull spidey for a surprise edit 😜</span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
             </div>
             </>

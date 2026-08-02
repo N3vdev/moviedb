@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Claude Buddy</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="card">
+    <div class="creature" id="creature"></div>
+    <div class="info">
+      <div class="progress-row">
+        <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+        <span class="progress-label" id="progressLabel"></span>
+      </div>
+      <div class="meta" id="meta"></div>
+    </div>
+  </div>
+
+  <div id="bars" class="bars"></div>
+
+  <button id="refreshBtn" class="btn refresh">↻ Refresh now</button>
+  <div id="refreshStatus" class="refresh-status"></div>
+
+  <div class="row">
+    <button id="demoBtn" class="btn ghost">Preview moods</button>
+    <button id="optionsBtn" class="btn ghost">Settings</button>
+  </div>
+
+  <a class="claude-link" href="https://claude.ai/new#settings/usage" target="_blank" rel="noopener">Open claude.ai usage settings →</a>
+
+  <p class="footnote">
+    Runs entirely on your device. Nothing is sent anywhere. Usage is fetched
+    directly from claude.ai's own usage API using your existing session.
+  </p>
+
+  <script src="../shared/mascot.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
