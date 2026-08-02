@@ -574,7 +574,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   // 'quiz1' asks the user to pick a word (wrong answer replays video1),
   // 'quiz2' is the fake-out follow-up (one option replays again, the other
   // finally flips to video2). video1 is explicitly paused for the whole
-  // stretch this is up (see handleStartQuiz/the overlay below) so nothing
+  // stretch this is up (see handleWebBreak/the overlay below) so nothing
   // plays behind it.
   const [quizStage, setQuizStage] = useState<'none' | 'quiz1' | 'quiz2'>('none')
   // Brief animated feedback shown in place of the question/buttons right
@@ -839,7 +839,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   // again. Guarded against re-entry — SpiderBuddy stays mounted (and
   // draggable) through the whole quiz, so a second hard pull mid-quiz would
   // otherwise just re-run this pointlessly.
-  const handleStartQuiz = () => {
+  const handleWebBreak = () => {
     if (quizStage !== 'none') return
     activeVideoFaceRef.current?.pause()
     setQuizStage('quiz1')
@@ -857,10 +857,13 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
   }
 
   // "Wrong" outcomes from either quiz step (samosa / Dikha bc) — angry
-  // reaction, then dismiss the overlay and replay video1 from the start.
+  // reaction, then dismiss the overlay, let SpiderBuddy be pulled again
+  // once video1 nears its end this time round (see spideyGone), and replay
+  // video1 from the start.
   const handleQuizWrong = () => {
     playQuizReaction('wrong', () => {
       setQuizStage('none')
+      setSpideyGone(false)
       activeVideoFaceRef.current?.replay()
     })
   }
@@ -956,7 +959,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
             "Click here" button — see NEAR_END_THRESHOLD_SECONDS) rather than
             waiting for it to fully end. Descends from just above the card on
             mount, then keeps swinging. IS the "Click here" button now — see
-            handleStartQuiz/onActivate — except pulling him hard enough to
+            handleWebBreak/onActivate — except pulling him hard enough to
             trigger it is deliberately not easy (see ACTIVATE_THRESHOLD in
             SpiderBuddy.tsx). A sibling of the max-h/overflow wrapper below
             (not nested inside it) so it isn't clipped by that wrapper's own
@@ -964,7 +967,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
             this card's own scale/opacity via `position: absolute` against
             this `relative` motion.div. */}
         {isSrii && video1NearEnd && (
-          <SpiderBuddy onActivate={handleStartQuiz} onBroken={() => setSpideyGone(true)} />
+          <SpiderBuddy onActivate={handleWebBreak} onBroken={() => setSpideyGone(true)} />
         )}
 
         {/* max-h/overflow live on this wrapper (not the rounded card inside)
@@ -1153,16 +1156,29 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                   transition={{ duration: FLIP_DURATION_MS / 1000, ease: FLIP_EASE }}
                 >
                   {stage === 'video2' ? (
-                    <VideoFace
-                      ref={activeVideoFaceRef}
-                      src={video2Src ?? selected.secondVideoSrc}
-                      onAspectRatio={setVideo2Ratio}
-                      onMutedChange={setIsMuted}
-                      onErrorChange={setHasVideoError}
-                      showIntroBar
-                      progress={video2Progress}
-                      style={{ transform: 'rotateY(180deg)' }}
-                    />
+                    // Fades/scales in exactly like the hero image does on
+                    // first open, for a "new popup appearing" feel — layered
+                    // on top of (not instead of) the parent's own rotateY,
+                    // which is still what actually masks the video1/video2
+                    // DOM swap.
+                    <motion.div
+                      className="h-full w-full"
+                      style={{ transformStyle: 'preserve-3d' }}
+                      initial={{ opacity: 0, scale: 1.04 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+                    >
+                      <VideoFace
+                        ref={activeVideoFaceRef}
+                        src={video2Src ?? selected.secondVideoSrc}
+                        onAspectRatio={setVideo2Ratio}
+                        onMutedChange={setIsMuted}
+                        onErrorChange={setHasVideoError}
+                        showIntroBar
+                        progress={video2Progress}
+                        style={{ transform: 'rotateY(180deg)' }}
+                      />
+                    </motion.div>
                   ) : (
                     <VideoFace
                       ref={activeVideoFaceRef}
@@ -1184,7 +1200,7 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                 </motion.div>
 
                 {/* A little joke gate between "Click here" and video2 —
-                    video1 is explicitly paused (see handleStartQuiz) for
+                    video1 is explicitly paused (see handleWebBreak) for
                     as long as this is up, and it fully covers the frozen
                     frame besides, so nothing plays or is even visible
                     behind it. Sits above the 3D-rotating video, not inside
