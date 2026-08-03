@@ -948,10 +948,16 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
         transition={MODAL_SPRING}
         style={{ willChange: 'transform, opacity, filter' }}
         className={`relative w-full ${
-          // Srii's video content is portrait/near-square — a narrower card
-          // fits that far better than the wider 16:9-tuned width every
-          // other special card uses.
-          isSrii ? 'max-w-sm sm:max-w-md' : 'max-w-xl sm:max-w-2xl'
+          // Srii's video content is portrait/near-square, so it never needed
+          // the wider 16:9-tuned width every other special card uses — but
+          // narrow enough that the hero stage's long description wrapped
+          // into enough lines to push "Watch Now" past the bottom of a
+          // real (chrome-shrunk) laptop browser viewport, forcing a scroll
+          // to reach it. Widening it (without going all the way to the
+          // other cards' width) gives that text more room to breathe
+          // horizontally, which is what actually buys back the vertical
+          // space — same content, fewer lines.
+          isSrii ? 'max-w-md sm:max-w-xl' : 'max-w-xl sm:max-w-2xl'
         }`}
       >
         {/* Only shows up on the Srii card, spawning during video1's final
@@ -1083,8 +1089,15 @@ export default function SpecialCardModal({ selected, onClose }: SpecialCardModal
                 initial={{ opacity: 0, scale: 1.04 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-                className={`relative h-72 w-full overflow-hidden sm:h-80 ${
-                  isSrii ? 'bg-[#241620]' : 'bg-[#1c1c22]'
+                className={`relative w-full overflow-hidden ${
+                  // Srii's hero copy runs noticeably longer than the other
+                  // cards' — at the full h-72/h-80 height that combination
+                  // was what pushed "Watch Now" below the fold on a real
+                  // (chrome-shrunk) laptop browser viewport. A shorter image
+                  // just for this card buys back the vertical room the
+                  // extra text needs, without shrinking the other cards'
+                  // (shorter-copy) hero shots for no reason.
+                  isSrii ? 'h-52 bg-[#241620] sm:h-60' : 'h-72 bg-[#1c1c22] sm:h-80'
                 }`}
               >
                 {heroImage && (
